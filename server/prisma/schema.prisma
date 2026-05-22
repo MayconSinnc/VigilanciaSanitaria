@@ -1,0 +1,160 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Usuario {
+  id         Int       @id @default(autoincrement())
+  nome       String
+  cpf        String    @unique
+  cargo      String?
+  email      String?   @unique
+  senhaHash  String
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  Inspecoes  Inspecao[]
+  Auditorias Auditoria[]
+}
+
+model Estabelecimento {
+  id               Int        @id @default(autoincrement())
+  cnpj             String     @unique
+  razaoSocial      String
+  nomeFantasia     String
+  endereco         String
+  numero           String?
+  bairro           String?
+  cidade           String
+  estado           String
+  cep              String?
+  uf               String?
+  inscricaoMunicipal String?
+  latitude         Float?
+  longitude        Float?
+  telefone         String?
+  email            String?
+  responsavel      String?
+  cpfResponsavel   String?
+  risco            String?
+  statusAlvara     String?
+  statusSanitario  String?
+  grauRisco        String?
+  dataCadastro     DateTime?  @default(now())
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  Inspecoes        Inspecao[]
+}
+
+model Inspecao {
+  id                 Int            @id @default(autoincrement())
+  tipoAuto           String         // INTIMACAO | INFRACAO | COLETA
+  estabelecimentoId  Int
+  fiscalId           Int
+  data               DateTime
+  hora               String
+  descricao          String?
+  situacao           String?        // REGULAR | IRREGULAR | INTERDITADO | EM_ADEQUACAO
+  gpsLatitude        Float?
+  gpsLongitude       Float?
+  status             String? // Pendente, Enviado, Erro, Sincronizado
+  numeroAuto         String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  estabelecimento    Estabelecimento @relation(fields: [estabelecimentoId], references: [id])
+  fiscal             Usuario        @relation(fields: [fiscalId], references: [id])
+  Fotos              Foto[]
+  PenalidadeAplicada Penalidade?     @relation(fields: [penalidadeId], references: [id])
+  penalidadeId       Int?
+  Intimacao          Intimacao?
+  Infracao           Infracao?
+  Coleta             ColetaAmostra?
+  Assinatura         Assinatura?
+  Auditorias         Auditoria[]
+}
+
+model Foto {
+  id            Int       @id @default(autoincrement())
+  inspecaoId    Int
+  url           String
+  data          DateTime
+  gpsLatitude   Float?
+  gpsLongitude  Float?
+  dispositivo   String?
+  resolucao     String?
+  createdAt     DateTime   @default(now())
+  inspecao      Inspecao   @relation(fields: [inspecaoId], references: [id])
+}
+
+model Penalidade {
+  id          Int      @id @default(autoincrement())
+  descricao   String
+  codigoLegal String   @unique
+  valor       Float?
+  valorMinimo Float?
+  valorMaximo Float?
+  createdAt   DateTime @default(now())
+  Inspecoes   Inspecao[]
+}
+
+model Auditoria {
+  id         Int      @id @default(autoincrement())
+  usuarioId  Int?
+  acao       String
+  data       DateTime @default(now())
+  hora       String
+  gps        String?
+  dispositivo String?
+  ip         String?
+  inspecaoId Int?
+  usuario    Usuario? @relation(fields: [usuarioId], references: [id])
+  inspecao   Inspecao? @relation(fields: [inspecaoId], references: [id])
+}
+
+model Intimacao {
+  id                    Int      @id @default(autoincrement())
+  inspecaoId            Int      @unique
+  descricaoIrregularidade String
+  baseLegal             String
+  prazoRegularizacao    DateTime
+  penalidadePrevista    String
+  inspecao              Inspecao @relation(fields: [inspecaoId], references: [id])
+}
+
+model Infracao {
+  id           Int      @id @default(autoincrement())
+  inspecaoId   Int      @unique
+  descricao    String
+  baseLegal    String
+  gravidade    String   // Leve, Moderada, Grave, Gravíssima
+  penalidadeId Int?
+  valorMulta   Float?
+  inspecao     Inspecao @relation(fields: [inspecaoId], references: [id])
+}
+
+model ColetaAmostra {
+  id               Int      @id @default(autoincrement())
+  inspecaoId       Int      @unique
+  produtoNome      String
+  marca            String?
+  lote             String?
+  dataFabricacao   DateTime?
+  dataValidade     DateTime?
+  quantidade       Float
+  temperatura      Float?
+  condicaoProduto  String? // Refrigerado, Congelado, Ambiente
+  destinoLaboratorio String // Laboratório municipal, LACEN, Outro
+  inspecao         Inspecao @relation(fields: [inspecaoId], references: [id])
+}
+
+model Assinatura {
+  id                    Int      @id @default(autoincrement())
+  inspecaoId            Int      @unique
+  assinaturaFiscal      String   // base64 ou referência de arquivo
+  assinaturaResponsavel String?
+  dataAssinatura        DateTime @default(now())
+  inspecao              Inspecao @relation(fields: [inspecaoId], references: [id])
+}
