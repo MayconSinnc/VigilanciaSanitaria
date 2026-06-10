@@ -7,10 +7,14 @@ import { prisma } from './plugins/prisma.js';
 import { registerSwagger } from './plugins/swagger.js';
 
 const server = Fastify({
-  logger: true
+  logger: true,
+  bodyLimit: 25 * 1024 * 1024
 });
 
-server.register(cors, { origin: true });
+server.register(cors, {
+  origin: true,
+  allowedHeaders: ['Authorization', 'Content-Type', 'x-sinnc-token']
+});
 
 server.register(jwt, {
   secret: process.env.JWT_SECRET || 'dev-secret'

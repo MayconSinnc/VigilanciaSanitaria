@@ -33,6 +33,12 @@ server/dist/
 
 mobile/.dartServer_override/
 
+.pub-cache/
+.pub-cache2/
+crash-*.txt
+mobile/flutter_*.png
+mobile/android/gradle/gradle-daemon-jvm.properties
+
 *.log
 hs_err_pid*.log
 replay_pid*.log

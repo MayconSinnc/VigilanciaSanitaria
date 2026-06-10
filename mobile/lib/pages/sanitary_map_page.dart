@@ -604,12 +604,12 @@ class _SanitaryMapPageState extends State<SanitaryMapPage> {
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          _formatEmpty(est['nome_fantasia'] ?? est['nome'] ?? est['nomeFantasia']),
+          _formatEmpty(est['razao_social'] ?? est['razaoSocial'] ?? est['nome_fantasia'] ?? est['nome'] ?? est['nomeFantasia']),
           style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 4),
         Text(
-          _formatEmpty(est['razao_social'] ?? est['razaoSocial'] ?? ''),
+          _formatEmpty(est['nome_fantasia'] ?? est['nome'] ?? est['nomeFantasia'] ?? ''),
           style: TextStyle(color: Colors.grey[600], fontSize: 13),
         ),
         const SizedBox(height: 12),
@@ -720,7 +720,7 @@ class _SanitaryMapPageState extends State<SanitaryMapPage> {
   void _startInspection(Map<String, dynamic> est) {
     final cnpjDigits = (est['cnpj'] ?? '').toString().replaceAll(RegExp(r'\D'), '');
     Navigator.pushNamed(context, '/nova-inspecao', arguments: {
-      'nome': est['nome_fantasia'] ?? est['nome'] ?? est['nomeFantasia'],
+      'nome': est['razao_social'] ?? est['razaoSocial'] ?? est['nome_fantasia'] ?? est['nome'] ?? est['nomeFantasia'],
       'cnpj': cnpjDigits,
     });
   }

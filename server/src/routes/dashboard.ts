@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { AutoDocumentoStatus } from '@prisma/client';
 
 const BC_LAT = -26.9905;
 const BC_LNG = -48.6348;
@@ -79,6 +80,139 @@ export function registerDashboardRoutes(app: FastifyInstance) {
       autos: autosInfracao + autosColeta,
       autos_infracao: autosInfracao,
       autos_coleta: autosColeta,
+    });
+  });
+
+  app.get('/api/dashboard/resumo', { preValidation: [app.authenticate] }, async (_request, reply) => {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
+
+    const emitidosWhere = { status: { in: [AutoDocumentoStatus.FINALIZADO, AutoDocumentoStatus.SEM_EFEITO] } };
+
+    const [
+      aiTotal,
+      infTotal,
+      ipTotal,
+      colTotal,
+      risTotal,
+      aiEmitidos,
+      infEmitidos,
+      ipEmitidos,
+      colEmitidos,
+      risEmitidos,
+      aiHoje,
+      infHoje,
+      ipHoje,
+      colHoje,
+      risHoje,
+      aiRecent,
+      infRecent,
+      ipRecent,
+      colRecent,
+      risRecent,
+    ] = await Promise.all([
+      app.prisma.autoIntimacaoDocumento.count(),
+      app.prisma.autoInfracaoDocumento.count(),
+      app.prisma.autoImposicaoPenalidadeDocumento.count(),
+      app.prisma.autoColetaAmostraDocumento.count(),
+      app.prisma.relatorioInspecaoSanitariaDocumento.count(),
+      app.prisma.autoIntimacaoDocumento.count({ where: emitidosWhere }),
+      app.prisma.autoInfracaoDocumento.count({ where: emitidosWhere }),
+      app.prisma.autoImposicaoPenalidadeDocumento.count({ where: emitidosWhere }),
+      app.prisma.autoColetaAmostraDocumento.count({ where: emitidosWhere }),
+      app.prisma.relatorioInspecaoSanitariaDocumento.count({ where: emitidosWhere }),
+      app.prisma.autoIntimacaoDocumento.count({ where: { createdAt: { gte: start, lt: end } } }),
+      app.prisma.autoInfracaoDocumento.count({ where: { createdAt: { gte: start, lt: end } } }),
+      app.prisma.autoImposicaoPenalidadeDocumento.count({ where: { createdAt: { gte: start, lt: end } } }),
+      app.prisma.autoColetaAmostraDocumento.count({ where: { createdAt: { gte: start, lt: end } } }),
+      app.prisma.relatorioInspecaoSanitariaDocumento.count({ where: { createdAt: { gte: start, lt: end } } }),
+      app.prisma.autoIntimacaoDocumento.findMany({
+        take: 10,
+        orderBy: { updatedAt: 'desc' },
+        select: { id: true, numeroAuto: true, status: true, estabelecimentoNome: true, updatedAt: true },
+      }),
+      app.prisma.autoInfracaoDocumento.findMany({
+        take: 10,
+        orderBy: { updatedAt: 'desc' },
+        select: { id: true, numeroAuto: true, status: true, estabelecimentoNome: true, updatedAt: true },
+      }),
+      app.prisma.autoImposicaoPenalidadeDocumento.findMany({
+        take: 10,
+        orderBy: { updatedAt: 'desc' },
+        select: { id: true, numeroAuto: true, status: true, estabelecimentoNome: true, updatedAt: true },
+      }),
+      app.prisma.autoColetaAmostraDocumento.findMany({
+        take: 10,
+        orderBy: { updatedAt: 'desc' },
+        select: { id: true, numeroAuto: true, status: true, estabelecimentoNome: true, updatedAt: true },
+      }),
+      app.prisma.relatorioInspecaoSanitariaDocumento.findMany({
+        take: 10,
+        orderBy: { updatedAt: 'desc' },
+        select: { id: true, numeroRelatorio: true, status: true, estabelecimentoNome: true, updatedAt: true },
+      }),
+    ]);
+
+    const historico = [
+      ...aiRecent.map((d) => ({
+        tipo: 'AUTO_INTIMACAO',
+        numero: d.numeroAuto,
+        status: d.status,
+        estabelecimento_nome: d.estabelecimentoNome ?? '',
+        updated_at: d.updatedAt,
+      })),
+      ...infRecent.map((d) => ({
+        tipo: 'AUTO_INFRACAO',
+        numero: d.numeroAuto,
+        status: d.status,
+        estabelecimento_nome: d.estabelecimentoNome ?? '',
+        updated_at: d.updatedAt,
+      })),
+      ...ipRecent.map((d) => ({
+        tipo: 'IMPOSICAO_PENALIDADE',
+        numero: d.numeroAuto,
+        status: d.status,
+        estabelecimento_nome: d.estabelecimentoNome ?? '',
+        updated_at: d.updatedAt,
+      })),
+      ...colRecent.map((d) => ({
+        tipo: 'AUTO_COLETA_AMOSTRA',
+        numero: d.numeroAuto,
+        status: d.status,
+        estabelecimento_nome: d.estabelecimentoNome ?? '',
+        updated_at: d.updatedAt,
+      })),
+      ...risRecent.map((d) => ({
+        tipo: 'INSPECAO_SANITARIA',
+        numero: d.numeroRelatorio,
+        status: d.status,
+        estabelecimento_nome: d.estabelecimentoNome ?? '',
+        updated_at: d.updatedAt,
+      })),
+    ]
+      .sort((a, b) => (b.updated_at as Date).getTime() - (a.updated_at as Date).getTime())
+      .slice(0, 10)
+      .map((i) => ({
+        tipo: i.tipo,
+        numero: i.numero,
+        status: i.status,
+        estabelecimento_nome: i.estabelecimento_nome,
+        updated_at: (i.updated_at as Date).toISOString(),
+      }));
+
+    return reply.send({
+      hoje: aiHoje + infHoje + ipHoje + colHoje + risHoje,
+      autos_emitidos: aiEmitidos + infEmitidos + ipEmitidos + colEmitidos + risEmitidos,
+      total_documentos: aiTotal + infTotal + ipTotal + colTotal + risTotal,
+      por_tipo: {
+        auto_intimacao: { total: aiTotal, emitidos: aiEmitidos, hoje: aiHoje },
+        auto_infracao: { total: infTotal, emitidos: infEmitidos, hoje: infHoje },
+        imposicao_penalidade: { total: ipTotal, emitidos: ipEmitidos, hoje: ipHoje },
+        auto_coleta_amostra: { total: colTotal, emitidos: colEmitidos, hoje: colHoje },
+        inspecao_sanitaria: { total: risTotal, emitidos: risEmitidos, hoje: risHoje },
+      },
+      historico,
     });
   });
 

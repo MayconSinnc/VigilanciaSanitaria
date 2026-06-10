@@ -128,6 +128,8 @@ class _ImposicaoPenalidadePageState extends State<ImposicaoPenalidadePage> {
   void initState() {
     super.initState();
     _generateNumeroImposicao();
+    _dataProcesso = DateTime.now();
+    _dataVencimentoMulta = DateTime.now().add(const Duration(days: 30));
   }
 
   @override
@@ -346,7 +348,7 @@ class _ImposicaoPenalidadePageState extends State<ImposicaoPenalidadePage> {
             currentStep: _currentStep,
             steps: _steps,
             onStepTapped: (step) {
-              if (step < _currentStep) {
+              if (step <= _currentStep) {
                 setState(() {
                   _currentStep = step;
                 });

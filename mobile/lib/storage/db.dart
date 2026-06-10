@@ -9,20 +9,11 @@ const bool _mockMode = bool.fromEnvironment('MOCK_MODE', defaultValue: false);
 class LocalDb {
   static Database? _db;
   static const String _dbName = 'balneario_comboriu.db';
-  static const int _dbVersion = 8;
+  static const int _dbVersion = 9;
 
   static Future<Database> get instance async {
     if (_db != null) return _db!;
     
-    Future<void> onCreateDb(Database db, int version) async {
-      await db.execute('CREATE TABLE estabelecimentos (id INTEGER PRIMARY KEY, cnpj TEXT, razao_social TEXT, nome_fantasia TEXT, cnae TEXT, rua TEXT, numero TEXT, bairro TEXT, cep TEXT, cidade TEXT, telefone TEXT, email TEXT, responsavel TEXT, cpf_responsavel TEXT, risco TEXT, status_alvara TEXT, lat REAL, lng REAL, atividade_principal TEXT, status_sanitario TEXT, grau_risco TEXT, data_cadastro TEXT, uf TEXT)');
-      await db.execute('CREATE TABLE inspecoes (id INTEGER PRIMARY KEY, tipo_auto TEXT, estabelecimento_id INTEGER, data TEXT, hora TEXT, status TEXT)');
-      await db.execute('CREATE TABLE fotos (id INTEGER PRIMARY KEY, inspecao_id INTEGER, url TEXT, data TEXT, gps TEXT)');
-      await db.execute('CREATE TABLE penalidades (id INTEGER PRIMARY KEY, descricao TEXT, codigo_legal TEXT, valor REAL)');
-      await db.execute('CREATE TABLE autos_sanitarios (id INTEGER PRIMARY KEY, tipo_auto TEXT, numero_auto TEXT, estabelecimento_id INTEGER, fiscal_id INTEGER, data TEXT, descricao TEXT, fundamentacao_legal TEXT, observacoes TEXT, status TEXT)');
-      await db.execute('CREATE TABLE itens_inspecao (id INTEGER PRIMARY KEY, inspecao_id INTEGER, item TEXT, status TEXT, observacao TEXT)');
-    }
-
     Future<void> onUpgradeDb(Database db, int oldVersion, int newVersion) async {
       if (oldVersion < 2) {
         await db.execute('CREATE TABLE IF NOT EXISTS autos_sanitarios (id INTEGER PRIMARY KEY, tipo_auto TEXT, numero_auto TEXT, estabelecimento_id INTEGER, fiscal_id INTEGER, data TEXT, descricao TEXT, fundamentacao_legal TEXT, observacoes TEXT, status TEXT)');
@@ -112,6 +103,66 @@ class LocalDb {
           try { await db.execute('ALTER TABLE autos_sanitarios ADD COLUMN ${entry.key} ${entry.value}'); } catch (_) {}
         }
       }
+      if (oldVersion < 9) {
+        final autosColumns = <String, String>{
+          'inspecao_id': 'INTEGER',
+          'responsavel_nome': 'TEXT',
+          'responsavel_cpf': 'TEXT',
+          'responsavel_cargo': 'TEXT',
+          'responsavel_telefone': 'TEXT',
+          'fiscal_nome': 'TEXT',
+          'fiscal_matricula': 'TEXT',
+          'data_inspecao': 'TEXT',
+          'hora_inspecao': 'TEXT',
+          'tipo_inspecao': 'TEXT',
+          'classificacao_infracao': 'TEXT',
+          'apreensao': 'INTEGER',
+          'interdicao': 'INTEGER',
+          'tipo_medida': 'TEXT',
+          'prazo_regularizacao': 'INTEGER',
+          'valor_multa': 'REAL',
+          'latitude': 'REAL',
+          'longitude': 'REAL',
+          'endereco_gps': 'TEXT',
+          'pdf_local': 'TEXT',
+          'ano': 'TEXT',
+          'data_hora': 'TEXT',
+          'tipo_documento': 'TEXT',
+          'responsavel_tecnico_id': 'TEXT',
+          'profissional_id': 'TEXT',
+          'testemunha_1': 'TEXT',
+          'testemunha_2': 'TEXT',
+          'dados_estabelecimento': 'TEXT',
+          'base_legal_json': 'TEXT',
+          'descricao_json': 'TEXT',
+          'auto_intimacao_json': 'TEXT',
+          'auto_infracao_json': 'TEXT',
+          'imposicao_penalidade_json': 'TEXT',
+          'auto_coleta_amostra_json': 'TEXT',
+          'inspecao_sanitaria_json': 'TEXT',
+          'profissionais_equipe_json': 'TEXT',
+          'payload_json': 'TEXT',
+          'data_documento': 'TEXT',
+          'profissional_nome': 'TEXT',
+          'estabelecimento_nome': 'TEXT',
+          'estabelecimento_cnpj': 'TEXT',
+          'numero_ano': 'TEXT',
+          'status_sincronizacao': 'TEXT',
+        };
+        for (final entry in autosColumns.entries) {
+          try { await db.execute('ALTER TABLE autos_sanitarios ADD COLUMN ${entry.key} ${entry.value}'); } catch (_) {}
+        }
+      }
+    }
+
+    Future<void> onCreateDb(Database db, int version) async {
+      await db.execute('CREATE TABLE IF NOT EXISTS estabelecimentos (id INTEGER PRIMARY KEY, cnpj TEXT, razao_social TEXT, nome_fantasia TEXT, cnae TEXT, rua TEXT, numero TEXT, bairro TEXT, cep TEXT, cidade TEXT, telefone TEXT, email TEXT, responsavel TEXT, cpf_responsavel TEXT, risco TEXT, status_alvara TEXT, lat REAL, lng REAL, atividade_principal TEXT, status_sanitario TEXT, grau_risco TEXT, data_cadastro TEXT, uf TEXT)');
+      await db.execute('CREATE TABLE IF NOT EXISTS inspecoes (id INTEGER PRIMARY KEY, tipo_auto TEXT, estabelecimento_id INTEGER, data TEXT, hora TEXT, status TEXT)');
+      await db.execute('CREATE TABLE IF NOT EXISTS fotos (id INTEGER PRIMARY KEY, inspecao_id INTEGER, url TEXT, data TEXT, gps TEXT)');
+      await db.execute('CREATE TABLE IF NOT EXISTS penalidades (id INTEGER PRIMARY KEY, descricao TEXT, codigo_legal TEXT, valor REAL)');
+      await db.execute('CREATE TABLE IF NOT EXISTS autos_sanitarios (id INTEGER PRIMARY KEY, tipo_auto TEXT, numero_auto TEXT, estabelecimento_id INTEGER, fiscal_id INTEGER, data TEXT, descricao TEXT, fundamentacao_legal TEXT, observacoes TEXT, status TEXT)');
+      await db.execute('CREATE TABLE IF NOT EXISTS itens_inspecao (id INTEGER PRIMARY KEY, inspecao_id INTEGER, item TEXT, status TEXT, observacao TEXT)');
+      await onUpgradeDb(db, 1, version);
     }
 
     if (kIsWeb) {
@@ -222,9 +273,6 @@ class LocalDb {
   }
 
   static Future<List<Map<String, dynamic>>> listarInspecoesLocal() async {
-    if (kIsWeb) {
-      return [];
-    }
     try {
       final db = await instance;
       return db.query('inspecoes', orderBy: 'data DESC');
@@ -240,6 +288,26 @@ class LocalDb {
     } catch (_) {
       return [];
     }
+  }
+
+  static Future<List<Map<String, dynamic>>> listarAutosSanitariosPendentesSync() async {
+    try {
+      final db = await instance;
+      return db.query(
+        'autos_sanitarios',
+        where:
+            '(status_sincronizacao IS NULL OR status_sincronizacao = ? OR status_sincronizacao IN (?, ?, ?))',
+        whereArgs: ['', 'PENDENTE_SINCRONIZACAO', 'ENVIADO', 'ERRO'],
+        orderBy: 'data_hora ASC, data ASC, id ASC',
+      );
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<int> atualizarAutoSanitario(int id, Map<String, dynamic> values) async {
+    final db = await instance;
+    return db.update('autos_sanitarios', values, where: 'id = ?', whereArgs: [id]);
   }
 
   static Future<String> nextNumeroAuto(String tipo) async {

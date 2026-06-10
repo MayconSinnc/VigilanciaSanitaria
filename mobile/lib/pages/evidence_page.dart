@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:dio/dio.dart';
 import 'package:image_picker/image_picker.dart';
 import '../services/api.dart';
 import '../storage/db.dart';
@@ -25,33 +24,9 @@ class _EvidencePageState extends State<EvidencePage> {
     Navigator.of(context).maybePop();
   }
 
-  // #region debug-point C:evidence-page
-  void _debugEvidence(String stage, Map<String, Object?> data) {
-    unawaited(Dio()
-        .post(
-          'http://127.0.0.1:7777/event',
-          data: {
-            'sessionId': 'web-evidence-save',
-            'runId': 'pre-fix',
-            'hypothesisId': 'C',
-            'location': 'evidence_page.dart',
-            'msg': '[DEBUG] evidence page state',
-            'data': {'stage': stage, ...data},
-            'ts': DateTime.now().millisecondsSinceEpoch,
-          },
-        )
-        .then<void>((_) {}, onError: (_) {}));
-  }
-  // #endregion
-
   @override
   void initState() {
     super.initState();
-    _debugEvidence('init-state', {
-      'isWeb': kIsWeb,
-      'inspecaoId': widget.inspecaoId,
-      'imageCount': _images.length,
-    });
   }
 
   Future<void> _addFromCamera() async {
@@ -77,12 +52,6 @@ class _EvidencePageState extends State<EvidencePage> {
   }
 
   Future<void> _saveAll() async {
-    _debugEvidence('save-click', {
-      'isWeb': kIsWeb,
-      'inspecaoId': widget.inspecaoId,
-      'imageCount': _images.length,
-      'saving': _saving,
-    });
     if (_saving) return;
     if (_images.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -98,10 +67,6 @@ class _EvidencePageState extends State<EvidencePage> {
         final b64 = base64Encode(bytes);
         if (kIsWeb) {
           final inspecaoId = widget.inspecaoId;
-          _debugEvidence('save-web-branch', {
-            'inspecaoId': inspecaoId,
-            'payloadSize': b64.length,
-          });
           if (inspecaoId == null || inspecaoId <= 0) {
             throw StateError('missing_inspecao_id');
           }
@@ -112,16 +77,8 @@ class _EvidencePageState extends State<EvidencePage> {
             url: b64,
             data: iso,
           );
-          _debugEvidence('save-web-result', {
-            'inspecaoId': inspecaoId,
-            'ok': ok,
-          });
           if (!ok) throw StateError('upload_failed');
         } else {
-          _debugEvidence('save-local-branch', {
-            'inspecaoId': widget.inspecaoId,
-            'payloadSize': b64.length,
-          });
           final db = await LocalDb.instance;
           await db.insert('fotos', {
             'inspecao_id': widget.inspecaoId ?? 0,
@@ -133,11 +90,6 @@ class _EvidencePageState extends State<EvidencePage> {
       }
       if (mounted) Navigator.pop(context);
     } catch (e) {
-      _debugEvidence('save-error', {
-        'errorType': e.runtimeType.toString(),
-        'error': e.toString(),
-        'inspecaoId': widget.inspecaoId,
-      });
       if (!mounted) return;
       final msg = (e is StateError && e.message == 'missing_inspecao_id')
           ? 'Abra as evidências a partir do Formulário Oficial.'

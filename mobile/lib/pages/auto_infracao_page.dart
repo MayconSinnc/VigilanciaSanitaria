@@ -43,6 +43,8 @@ class _AutoInfracaoPageState extends State<AutoInfracaoPage> {
   String _respCpf = '';
   String _respCargo = '';
   String _respTelefone = '';
+  bool _possuiPastaVisa = false;
+  final TextEditingController _numeroPastaVisaCtrl = TextEditingController();
 
   String _tipoInfracao = 'Higiênico-sanitária';
   final List<String> _tiposInfracao = [
@@ -123,12 +125,14 @@ class _AutoInfracaoPageState extends State<AutoInfracaoPage> {
   void initState() {
     super.initState();
     _prazoDefesaCtrl = TextEditingController(text: _prazoDefesa);
+    _dataRetorno = DateTime.now();
     _generateNumeroAuto();
   }
 
   @override
   void dispose() {
     _prazoDefesaCtrl.dispose();
+    _numeroPastaVisaCtrl.dispose();
     super.dispose();
   }
 
@@ -371,7 +375,7 @@ class _AutoInfracaoPageState extends State<AutoInfracaoPage> {
             currentStep: _currentStep,
             steps: _steps,
             onStepTapped: (step) {
-              if (step < _currentStep) {
+              if (step <= _currentStep) {
                 setState(() {
                   _currentStep = step;
                 });
@@ -459,6 +463,41 @@ class _AutoInfracaoPageState extends State<AutoInfracaoPage> {
           endereco: _endereco,
           telefone: _telefone,
           responsavel: _responsavelEstabelecimento,
+        ),
+        const SizedBox(height: 16),
+        OfficialSectionCard(
+          title: 'Pasta VISA',
+          icon: Icons.folder,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SwitchListTile(
+                title: const Text('Possui Pasta VISA?'),
+                value: _possuiPastaVisa,
+                onChanged: (v) {
+                  setState(() {
+                    _possuiPastaVisa = v;
+                    if (!v) _numeroPastaVisaCtrl.clear();
+                  });
+                  _dadosFormKey.currentState?.validate();
+                },
+                contentPadding: EdgeInsets.zero,
+              ),
+              if (_possuiPastaVisa) ...[
+                const SizedBox(height: 12),
+                OfficialTextField(
+                  label: 'Número da Pasta VISA',
+                  controller: _numeroPastaVisaCtrl,
+                  required: true,
+                  validator: (v) {
+                    if (!_possuiPastaVisa) return null;
+                    if ((v ?? '').trim().isEmpty) return 'Informe o número da Pasta VISA.';
+                    return null;
+                  },
+                ),
+              ],
+            ],
+          ),
         ),
         const SizedBox(height: 16),
         OfficialSectionCard(
@@ -1108,13 +1147,80 @@ class _AutoInfracaoPageState extends State<AutoInfracaoPage> {
     );
   }
 
-  void _save() {
+  Future<void> _abrirRelatorioInspecao(Map<String, dynamic> payload) async {
+    final estab = <String, dynamic>{
+      'nomeFantasia': _nomeFantasia,
+      'razaoSocial': _razaoSocial,
+      'cnpj': _cnpj,
+      'endereco': _endereco,
+      'telefone': _telefone,
+      'inscricaoMunicipal': _inscricaoMunicipal,
+    }..removeWhere((_, v) => (v ?? '').toString().trim().isEmpty);
+
+    await Navigator.pushNamed(
+      context,
+      '/relatorio-inspecao-sanitario',
+      arguments: {
+        if (estab.isNotEmpty) 'estabelecimento': estab,
+        'documento_vinculado': {
+          'tipo_documento': payload['tipo_documento'] ?? 'AUTO_INFRACAO',
+          'numero_ano': payload['numero_ano'] ?? payload['numero_auto'] ?? payload['numero'] ?? _numeroAuto,
+          'payload': payload,
+        },
+      },
+    );
+  }
+
+  Map<String, dynamic> _buildPayload() {
+    return <String, dynamic>{
+      'tipo_documento': 'AUTO_INFRACAO',
+      'numero_ano': _numeroAuto,
+      'data_lavratura': _dataLavratura.toIso8601String().substring(0, 10),
+      'dados_estabelecimento': {
+        'nome_fantasia': _nomeFantasia,
+        'razao_social': _razaoSocial,
+        'cnpj': _cnpj,
+        'inscricao_municipal': _inscricaoMunicipal,
+        'endereco': _endereco,
+        'telefone': _telefone,
+        'possui_pasta_visa': _possuiPastaVisa,
+        'numero_pasta_visa': _possuiPastaVisa ? _numeroPastaVisaCtrl.text.trim() : '',
+      },
+      'auto_infracao': {
+        'tipo_infracao': _tipoInfracao,
+        'descricao_infracao': _descricaoInfracao,
+        'situacao_encontrada': _situacaoEncontrada,
+        'local_ocorrencia': _localOcorrencia,
+        'gravidade': _gravidade,
+        'reincidencia': _reincidencia,
+        'autos_anteriores': _autosAnteriores,
+        'possui_pasta_visa': _possuiPastaVisa,
+        'numero_pasta_visa': _possuiPastaVisa ? _numeroPastaVisaCtrl.text.trim() : '',
+        'base_legal': _baseLegal,
+        'artigo': _artigo,
+        'inciso': _inciso,
+        'paragrafo': _paragrafo,
+        'descricao_legal': _descricaoLegal,
+        'observacoes_legais': _observacoesLegais,
+        'medidas_adotadas': _medidasAdotadas,
+        'penalidade_sugerida': _penalidadeSugerida,
+        'valor_multa': _valorMulta,
+        'prazo_defesa': _prazoDefesaCtrl.text.trim(),
+        'prazo_regularizacao': _prazoRegularizacao,
+      },
+    };
+  }
+
+  Future<void> _save() async {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Auto de Infração salvo com sucesso!'),
         backgroundColor: AppColors.verde,
       ),
     );
-    Navigator.of(context).pop();
+    final payload = _buildPayload();
+    await _abrirRelatorioInspecao(payload);
+    if (!mounted) return;
+    Navigator.of(context).pop(true);
   }
 }

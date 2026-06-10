@@ -103,7 +103,16 @@ class _InspectionsPageState extends State<InspectionsPage> {
     final id = (it['estabelecimento_id'] ?? it['estabelecimentoId'] ?? it['estabelecimento_id']) as Object?;
     final estabId = (id is num) ? id.toInt() : int.tryParse('$id');
     final e = estabId == null ? null : _estabelecimentosById[estabId];
-    final nome = (e?['nome_fantasia'] ?? e?['nomeFantasia'] ?? e?['razao_social'] ?? e?['razaoSocial'] ?? '').toString().trim();
+    final nome = (e?['razao_social'] ??
+            e?['razaoSocial'] ??
+            e?['nomeRazaoSocial'] ??
+            e?['nome_razao_social'] ??
+            e?['nome_fantasia'] ??
+            e?['nomeFantasia'] ??
+            e?['nome'] ??
+            '')
+        .toString()
+        .trim();
     if (nome.isNotEmpty) return nome;
     return estabId != null ? 'Estabelecimento #$estabId' : 'Estabelecimento';
   }

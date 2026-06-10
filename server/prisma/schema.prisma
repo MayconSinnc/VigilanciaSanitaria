@@ -18,6 +18,21 @@ model Usuario {
   updatedAt  DateTime  @updatedAt
   Inspecoes  Inspecao[]
   Auditorias Auditoria[]
+  AutoInfracoesCriadas AutoInfracaoDocumento[] @relation("AutoInfracaoCriadoPor")
+  AutoInfracoesAtualizadas AutoInfracaoDocumento[] @relation("AutoInfracaoAtualizadoPor")
+  AutoInfracaoLogs AutoInfracaoLog[]
+  AutoIntimacoesCriadas AutoIntimacaoDocumento[] @relation("AutoIntimacaoCriadoPor")
+  AutoIntimacoesAtualizadas AutoIntimacaoDocumento[] @relation("AutoIntimacaoAtualizadoPor")
+  AutoIntimacaoLogs AutoIntimacaoLog[]
+  AutoImposicoesCriadas AutoImposicaoPenalidadeDocumento[] @relation("AutoImposicaoPenalidadeCriadoPor")
+  AutoImposicoesAtualizadas AutoImposicaoPenalidadeDocumento[] @relation("AutoImposicaoPenalidadeAtualizadoPor")
+  AutoImposicaoPenalidadeLogs AutoImposicaoPenalidadeLog[]
+  AutoColetasCriadas AutoColetaAmostraDocumento[] @relation("AutoColetaAmostraCriadoPor")
+  AutoColetasAtualizadas AutoColetaAmostraDocumento[] @relation("AutoColetaAmostraAtualizadoPor")
+  AutoColetaAmostraLogs AutoColetaAmostraLog[]
+  RelatoriosInspecaoCriados RelatorioInspecaoSanitariaDocumento[] @relation("RelatorioInspecaoCriadoPor")
+  RelatoriosInspecaoAtualizados RelatorioInspecaoSanitariaDocumento[] @relation("RelatorioInspecaoAtualizadoPor")
+  RelatorioInspecaoLogs RelatorioInspecaoLog[]
 }
 
 model Estabelecimento {
@@ -157,4 +172,236 @@ model Assinatura {
   assinaturaResponsavel String?
   dataAssinatura        DateTime @default(now())
   inspecao              Inspecao @relation(fields: [inspecaoId], references: [id])
+}
+
+enum AutoDocumentoStatus {
+  RASCUNHO
+  EM_EDICAO
+  FINALIZADO
+  SEM_EFEITO
+}
+
+model AutoInfracaoSequence {
+  ano     Int @id
+  lastSeq Int
+}
+
+model AutoInfracaoDocumento {
+  id                   Int                @id @default(autoincrement())
+  ano                  Int
+  sequencia            Int
+  numeroAuto           String             @unique
+  status               AutoDocumentoStatus @default(RASCUNHO)
+  dados                Json
+  estabelecimentoNome  String?
+  estabelecimentoCnpj  String?
+  dataLavratura        String?
+  semEfeitoMotivo      String?
+  semEfeitoUsuarioId   Int?
+  semEfeitoDataHora    DateTime?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  createdByUsuarioId   Int?
+  updatedByUsuarioId   Int?
+  createdBy            Usuario?           @relation("AutoInfracaoCriadoPor", fields: [createdByUsuarioId], references: [id])
+  updatedBy            Usuario?           @relation("AutoInfracaoAtualizadoPor", fields: [updatedByUsuarioId], references: [id])
+  Logs                 AutoInfracaoLog[]
+}
+
+model AutoInfracaoLog {
+  id            Int                 @id @default(autoincrement())
+  autoId        Int
+  usuarioId     Int?
+  dataHora      DateTime            @default(now())
+  campo         String
+  valorAnterior String?
+  valorNovo     String?
+  acao          String
+  dispositivo   String?
+  auto          AutoInfracaoDocumento @relation(fields: [autoId], references: [id])
+  usuario       Usuario?            @relation(fields: [usuarioId], references: [id])
+}
+
+model AutoIntimacaoSequence {
+  ano     Int @id
+  lastSeq Int
+}
+
+model AutoIntimacaoDocumento {
+  id                   Int                 @id @default(autoincrement())
+  ano                  Int
+  sequencia            Int
+  numeroAuto           String              @unique
+  status               AutoDocumentoStatus @default(RASCUNHO)
+  dados                Json
+  estabelecimentoNome  String?
+  estabelecimentoCnpj  String?
+  dataLavratura        String?
+  semEfeitoMotivo      String?
+  semEfeitoUsuarioId   Int?
+  semEfeitoDataHora    DateTime?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+  createdByUsuarioId   Int?
+  updatedByUsuarioId   Int?
+  createdBy            Usuario?            @relation("AutoIntimacaoCriadoPor", fields: [createdByUsuarioId], references: [id])
+  updatedBy            Usuario?            @relation("AutoIntimacaoAtualizadoPor", fields: [updatedByUsuarioId], references: [id])
+  Logs                 AutoIntimacaoLog[]
+}
+
+model AutoIntimacaoLog {
+  id            Int                  @id @default(autoincrement())
+  autoId        Int
+  usuarioId     Int?
+  dataHora      DateTime             @default(now())
+  campo         String
+  valorAnterior String?
+  valorNovo     String?
+  acao          String
+  dispositivo   String?
+  auto          AutoIntimacaoDocumento @relation(fields: [autoId], references: [id])
+  usuario       Usuario?             @relation(fields: [usuarioId], references: [id])
+}
+
+model AutoImposicaoPenalidadeSequence {
+  ano     Int @id
+  lastSeq Int
+}
+
+model AutoImposicaoPenalidadePasSequence {
+  ano     Int @id
+  lastSeq Int
+}
+
+model AutoImposicaoPenalidadeDocumento {
+  id                   Int                 @id @default(autoincrement())
+  ano                  Int
+  sequencia            Int
+  numeroAuto           String              @unique
+  status               AutoDocumentoStatus @default(RASCUNHO)
+  dados                Json
+  estabelecimentoNome  String?
+  estabelecimentoCnpj  String?
+  dataLavratura        String?
+  pasNumero            String?
+  semEfeitoMotivo      String?
+  semEfeitoUsuarioId   Int?
+  semEfeitoDataHora    DateTime?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+  createdByUsuarioId   Int?
+  updatedByUsuarioId   Int?
+  createdBy            Usuario?            @relation("AutoImposicaoPenalidadeCriadoPor", fields: [createdByUsuarioId], references: [id])
+  updatedBy            Usuario?            @relation("AutoImposicaoPenalidadeAtualizadoPor", fields: [updatedByUsuarioId], references: [id])
+  Logs                 AutoImposicaoPenalidadeLog[]
+}
+
+model AutoImposicaoPenalidadeLog {
+  id            Int                           @id @default(autoincrement())
+  autoId        Int
+  usuarioId     Int?
+  dataHora      DateTime                      @default(now())
+  campo         String
+  valorAnterior String?
+  valorNovo     String?
+  acao          String
+  dispositivo   String?
+  auto          AutoImposicaoPenalidadeDocumento @relation(fields: [autoId], references: [id])
+  usuario       Usuario?                      @relation(fields: [usuarioId], references: [id])
+}
+
+model AutoColetaAmostraSequence {
+  ano     Int @id
+  lastSeq Int
+}
+
+model AutoColetaAmostraDocumento {
+  id                   Int                 @id @default(autoincrement())
+  ano                  Int
+  sequencia            Int
+  numeroAuto           String              @unique
+  status               AutoDocumentoStatus @default(RASCUNHO)
+  dados                Json
+  estabelecimentoNome  String?
+  estabelecimentoCnpj  String?
+  dataLavratura        String?
+  semEfeitoMotivo      String?
+  semEfeitoUsuarioId   Int?
+  semEfeitoDataHora    DateTime?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+  createdByUsuarioId   Int?
+  updatedByUsuarioId   Int?
+  createdBy            Usuario?            @relation("AutoColetaAmostraCriadoPor", fields: [createdByUsuarioId], references: [id])
+  updatedBy            Usuario?            @relation("AutoColetaAmostraAtualizadoPor", fields: [updatedByUsuarioId], references: [id])
+  Logs                 AutoColetaAmostraLog[]
+}
+
+model AutoColetaAmostraLog {
+  id            Int                      @id @default(autoincrement())
+  autoId        Int
+  usuarioId     Int?
+  dataHora      DateTime                 @default(now())
+  campo         String
+  valorAnterior String?
+  valorNovo     String?
+  acao          String
+  dispositivo   String?
+  auto          AutoColetaAmostraDocumento @relation(fields: [autoId], references: [id])
+  usuario       Usuario?                 @relation(fields: [usuarioId], references: [id])
+}
+
+model RelatorioInspecaoSanitariaSequence {
+  ano     Int @id
+  lastSeq Int
+}
+
+model RelatorioInspecaoSanitariaDocumento {
+  id                   Int                 @id @default(autoincrement())
+  ano                  Int
+  sequencia            Int
+  numeroRelatorio      String              @unique
+  status               AutoDocumentoStatus @default(RASCUNHO)
+  dados                Json
+  estabelecimentoNome  String?
+  estabelecimentoCnpj  String?
+  dataLavratura        String?
+  semEfeitoMotivo      String?
+  semEfeitoUsuarioId   Int?
+  semEfeitoDataHora    DateTime?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+  createdByUsuarioId   Int?
+  updatedByUsuarioId   Int?
+  createdBy            Usuario?            @relation("RelatorioInspecaoCriadoPor", fields: [createdByUsuarioId], references: [id])
+  updatedBy            Usuario?            @relation("RelatorioInspecaoAtualizadoPor", fields: [updatedByUsuarioId], references: [id])
+  Logs                 RelatorioInspecaoLog[]
+}
+
+model RelatorioInspecaoLog {
+  id            Int                               @id @default(autoincrement())
+  relatorioId   Int
+  usuarioId     Int?
+  dataHora      DateTime                          @default(now())
+  campo         String
+  valorAnterior String?
+  valorNovo     String?
+  acao          String
+  dispositivo   String?
+  relatorio     RelatorioInspecaoSanitariaDocumento @relation(fields: [relatorioId], references: [id])
+  usuario       Usuario?                          @relation(fields: [usuarioId], references: [id])
+}
+
+model BaseLegalItemConfig {
+  id                    Int      @id @default(autoincrement())
+  baseLegalId            String   @unique
+  descricaoItem          String?
+  palavrasChave          Json?
+  sinonimos              Json?
+  prazoPadraoDias        Int?
+  aplicaAutoIntimacao    Boolean  @default(true)
+  descricaoIrregularidade String?
+  descricaoProvidencia   String?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
 }

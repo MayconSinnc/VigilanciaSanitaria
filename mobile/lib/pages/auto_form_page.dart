@@ -524,7 +524,28 @@ class _AutoFormPageState extends State<AutoFormPage> {
       }
 
       if (mounted) {
-        Navigator.pushNamed(
+        final estab = <String, dynamic>{
+          'nomeFantasia': _fantasiaCtrl.text.isNotEmpty ? _fantasiaCtrl.text : _nome,
+          'razaoSocial': _razaoCtrl.text,
+          'cnpj': _digitsOnly(_cnpjCtrl.text),
+          'endereco':
+              '${_logradouroCtrl.text}${_numeroEndCtrl.text.isNotEmpty ? ', ${_numeroEndCtrl.text}' : ''} - ${_bairroCtrl.text} - ${_cidadeCtrl.text} (${_cepCtrl.text})',
+          'telefone': _respTelefoneCtrl.text,
+        }..removeWhere((_, v) => (v ?? '').toString().trim().isEmpty);
+
+        final documentoVinculoPayload = <String, dynamic>{
+          'tipo_documento': _tipo == 'INF'
+              ? 'AUTO_INFRACAO'
+              : _tipo == 'COL'
+                  ? 'AUTO_COLETA'
+                  : 'AUTO_INTIMACAO',
+          'numero_ano': _numero,
+          'data_inspecao': dataInspecaoStr,
+          'hora_inspecao': horaStr,
+          if (_inspecaoId != null) 'inspecao_id': _inspecaoId,
+        };
+
+        await Navigator.pushNamed(
           context,
           '/auto-pdf',
           arguments: _buildPdfArguments(
@@ -532,6 +553,18 @@ class _AutoFormPageState extends State<AutoFormPage> {
             horaStr: horaStr,
           ),
         );
+        if (!mounted) return;
+
+        final abrir = await _perguntarAbrirRelatorioInspecao();
+        if (!mounted) return;
+        if (abrir) {
+          await _abrirRelatorioInspecao(
+            estabelecimento: estab,
+            documentoVinculoPayload: documentoVinculoPayload,
+          );
+          if (!mounted) return;
+        }
+        Navigator.of(context).maybePop(true);
       }
     } catch (e) {
       debugPrint('Erro ao salvar auto: $e');
@@ -549,6 +582,39 @@ class _AutoFormPageState extends State<AutoFormPage> {
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  Future<bool> _perguntarAbrirRelatorioInspecao() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Relatório de Inspeção Sanitária'),
+        content: const Text('Deseja abrir um Relatório de Inspeção Sanitária para complementar este registro?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Não, finalizar')),
+          ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Sim, abrir relatório')),
+        ],
+      ),
+    );
+    return result == true;
+  }
+
+  Future<void> _abrirRelatorioInspecao({
+    required Map<String, dynamic> estabelecimento,
+    required Map<String, dynamic> documentoVinculoPayload,
+  }) async {
+    await Navigator.pushNamed(
+      context,
+      '/relatorio-inspecao-sanitario',
+      arguments: {
+        if (estabelecimento.isNotEmpty) 'estabelecimento': estabelecimento,
+        'documento_vinculado': {
+          'tipo_documento': documentoVinculoPayload['tipo_documento'],
+          'numero_ano': documentoVinculoPayload['numero_ano'],
+          'payload': documentoVinculoPayload,
+        },
+      },
+    );
   }
 
   /// Valida todos os dados obrigatórios antes de salvar

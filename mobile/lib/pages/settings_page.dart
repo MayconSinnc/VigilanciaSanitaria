@@ -121,8 +121,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
     if (!mounted) return;
 
-    final isConnectionError = (result.message ?? '').toLowerCase().contains('conectar ao backend');
-    setState(() => _online = !isConnectionError);
+    setState(() => _online = !result.connectionError);
 
     final snackMessage = result.message?.trim().isNotEmpty == true
         ? result.message!
@@ -168,6 +167,34 @@ class _SettingsPageState extends State<SettingsPage> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _buildStatusCard(),
+            const SizedBox(height: 24),
+            const Text(
+              'Dados da VISA',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: AppColors.azulInstitucional,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.local_phone_outlined, color: AppColors.azulInstitucional),
+                title: const Text('Dados da VISA'),
+                subtitle: const Text('Setor, telefone e e-mail utilizados automaticamente nos documentos'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.pushNamed(context, '/configuracoes/dados-visa'),
+              ),
+            ),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.gavel_outlined, color: AppColors.azulInstitucional),
+                title: const Text('Bases Legais Padrão (Infração)'),
+                subtitle: const Text('Define 2 bases legais padrão para o Auto de Infração'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.pushNamed(context, '/configuracoes/bases-padrao-infracao'),
+              ),
+            ),
             const SizedBox(height: 24),
             const Text(
               'Integração e-Pública',

@@ -340,7 +340,35 @@ export async function importEmpresas(): Promise<EmpresaRemota[]> {
 }
 
 export async function buscarEconomicosPorCnpj(cnpj: string): Promise<any> {
-  return epublicaGet('/economicos', { cnpj });
+  const raw = String(cnpj ?? '');
+  const digits = raw.replace(/\D/g, '');
+  const formatted =
+    digits.length === 14 ? `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12, 14)}` : raw;
+
+  const attempts: Array<Record<string, string>> = [
+    { cnpj: digits },
+    { cnpj: formatted },
+    { cnpjCpf: digits },
+    { cnpjCpf: formatted },
+    { cpfCnpj: digits },
+    { cpfCnpj: formatted },
+    { documento: digits },
+    { documento: formatted },
+  ];
+
+  let lastErr: any = null;
+  for (const params of attempts) {
+    try {
+      return await epublicaGet('/economicos', params);
+    } catch (err: any) {
+      lastErr = err;
+      const status = err?.statusCode ?? 0;
+      if (status >= 400 && status < 500) continue;
+      throw err;
+    }
+  }
+  if (lastErr) throw lastErr;
+  return [];
 }
 
 export async function buscarEconomicosPorBusca(search: string): Promise<any> {

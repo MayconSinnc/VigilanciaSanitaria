@@ -14,6 +14,18 @@ async function main() {
     }
   });
 
+  await prisma.usuario.upsert({
+    where: { cpf: '12345678909' },
+    update: {},
+    create: {
+      nome: 'Administrador do Sistema',
+      cpf: '12345678909',
+      cargo: 'Administrador',
+      email: 'admin@prefeitura.gov.br',
+      senhaHash: 'senha123'
+    }
+  });
+
   await prisma.estabelecimento.upsert({
     where: { cnpj: '12.345.678/0001-99' },
     update: {},
@@ -30,7 +42,7 @@ async function main() {
     }
   });
 
-  console.log('Seed concluído. Usuário CPF 00000000000 com senha senha123');
+  console.log('Seed concluído. Usuários: 00000000000/senha123 e 12345678909/senha123');
 }
 
 main().finally(async () => {

@@ -1,6 +1,43 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'api_base_url.dart';
 import 'app_storage.dart';
+
+const bool _debugEnabled = bool.fromEnvironment('ENABLE_DEBUG_REPORT', defaultValue: false);
+const String _debugServerUrl = String.fromEnvironment('DEBUG_SERVER_URL', defaultValue: '');
+const String _debugSessionId = String.fromEnvironment('DEBUG_SESSION_ID', defaultValue: '');
+
+Future<void> _reportFrontendDebug({
+  required String hypothesisId,
+  required String location,
+  required String msg,
+  Map<String, dynamic>? data,
+  String runId = 'pre-fix',
+}) async {
+  if (!_debugEnabled || _debugServerUrl.trim().isEmpty) return;
+  try {
+    await Dio(
+      BaseOptions(
+        connectTimeout: const Duration(milliseconds: 800),
+        receiveTimeout: const Duration(milliseconds: 800),
+        sendTimeout: const Duration(milliseconds: 800),
+      ),
+    ).post(
+      _debugServerUrl,
+      data: {
+        'sessionId': _debugSessionId.trim().isEmpty ? 'apk-login-http-404' : _debugSessionId.trim(),
+        'runId': runId,
+        'hypothesisId': hypothesisId,
+        'location': location,
+        'msg': msg,
+        'data': data ?? const <String, dynamic>{},
+        'ts': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+  } catch (_) {}
+}
 
 class ApiService {
   static const bool mockMode = bool.fromEnvironment('MOCK_MODE', defaultValue: false);
@@ -9,6 +46,7 @@ class ApiService {
 
   String _baseUrl = resolveDefaultApiBaseUrl();
   static String _digitsOnly(String value) => value.replaceAll(RegExp(r'\D'), '');
+  String get baseUrl => _baseUrl;
 
   static final List<Map<String, dynamic>> _mockEstabelecimentos = [
     {
@@ -117,6 +155,38 @@ class ApiService {
     await AppStorage.write('base_url', _baseUrl);
   }
 
+  Future<List<int>> baixarPdfBytes(String pathOrUrl) async {
+    if (mockMode) return const <int>[];
+    await init();
+    final res = await _dio.get(
+      pathOrUrl,
+      options: Options(responseType: ResponseType.bytes),
+    );
+    final data = res.data;
+    if (data is Uint8List) return data;
+    if (data is List<int>) return data;
+    if (data is List) return data.whereType<int>().toList();
+    return const <int>[];
+  }
+
+  Future<Map<String, dynamic>> sincronizarSinncSaudeViewVsAutoTermo() async {
+    if (mockMode) return {};
+    await init();
+    final res = await _dio.post('/api/sinnc-saude/view-vs-auto-termo/sync');
+    if (res.data is Map) return Map<String, dynamic>.from(res.data as Map);
+    return {};
+  }
+
+  Future<Map<String, dynamic>> sincronizarAutoTermoSinncSaude(Map<String, dynamic> body) async {
+    if (mockMode) return {};
+    await init();
+    final sinncToken = await getSinncToken();
+    final res = await _dio.post('/api/sinnc/auto-termo/sincronizar',
+        data: body, options: sinncToken == null ? null : Options(headers: {'x-sinnc-token': sinncToken}));
+    if (res.data is Map) return Map<String, dynamic>.from(res.data as Map);
+    return {};
+  }
+
   Future<Map<String, dynamic>?> criarEstabelecimento({
     required String cnpj,
     required String razaoSocial,
@@ -189,6 +259,38 @@ class ApiService {
     if (res.statusCode == 201) return res.data;
     return null;
   }
+
+  Future<Map<String, dynamic>> dashboardResumo() async {
+    if (mockMode) return {};
+    await init();
+    final res = await _dio.get('/api/dashboard/resumo');
+    if (res.data is Map) return Map<String, dynamic>.from(res.data as Map);
+    return {};
+  }
+
+  Future<bool> loginSinnc(String cpf, String senha) async {
+    if (mockMode) {
+      await AppStorage.write('sinnc_token', 'mock-sinnc-token');
+      await AppStorage.write('sinnc_cpf', _digitsOnly(cpf));
+      return cpf.trim().isNotEmpty && senha.trim().isNotEmpty;
+    }
+    await init();
+    final res = await _dio.post('/api/sinnc/login', data: {'cpf': cpf, 'senha': senha});
+    final token = (res.data is Map ? (res.data['token'] as String?) : null);
+    if (token != null && token.trim().isNotEmpty) {
+      await AppStorage.write('sinnc_token', token.trim());
+      await AppStorage.write('sinnc_cpf', _digitsOnly(cpf));
+      return true;
+    }
+    return false;
+  }
+
+  Future<String?> getSinncToken() async {
+    final token = await AppStorage.read('sinnc_token');
+    if (token == null) return null;
+    final trimmed = token.trim();
+    return trimmed.isEmpty ? null : trimmed;
+  }
   bool _initialized = false;
 
   Future<void> init() async {
@@ -200,13 +302,17 @@ class ApiService {
     _baseUrl = normalizeSavedApiBaseUrl(saved);
     _dio.options.baseUrl = _baseUrl;
     _dio.options.connectTimeout = const Duration(seconds: 10);
-    _dio.options.sendTimeout = const Duration(seconds: 10);
+    _dio.options.sendTimeout = kIsWeb ? null : const Duration(seconds: 10);
     _dio.options.receiveTimeout = const Duration(seconds: 20);
     if (!_initialized) {
       _dio.interceptors.add(InterceptorsWrapper(onRequest: (options, handler) async {
         final token = await AppStorage.read('jwt_token');
         if (token != null) {
           options.headers['Authorization'] = 'Bearer $token';
+        }
+        final base = (_dio.options.baseUrl).toLowerCase();
+        if (base.contains('.ngrok-free.')) {
+          options.headers['ngrok-skip-browser-warning'] = 'true';
         }
         handler.next(options);
       }));
@@ -218,19 +324,84 @@ class ApiService {
     if (mockMode) {
       final token = 'mock-token';
       await AppStorage.write('jwt_token', token);
+      await AppStorage.write('usuario_nome', 'Fiscal (Mock)');
+      await AppStorage.write('usuario_cpf', _digitsOnly(cpf));
       return cpf.trim().isNotEmpty && senha.trim().isNotEmpty;
     }
     await init();
     try {
+      final baseUrl = _dio.options.baseUrl;
+      final fullUrl = '${baseUrl.replaceAll(RegExp(r'/*$'), '')}/auth/login';
+      // #region debug-point H2:login-request
+      unawaited(
+        _reportFrontendDebug(
+          hypothesisId: 'H2',
+          location: 'ApiService.login',
+          msg: 'Efetuando login (request)',
+          data: {
+            'baseUrl': baseUrl,
+            'url': fullUrl,
+            'path': '/auth/login',
+            'cpfLen': _digitsOnly(cpf).length,
+          },
+        ),
+      );
+      // #endregion
       final res = await _dio.post('/auth/login', data: {'cpf': cpf, 'senha': senha});
+      // #region debug-point H2:login-response
+      unawaited(
+        _reportFrontendDebug(
+          hypothesisId: 'H2',
+          location: 'ApiService.login',
+          msg: 'Login retornou response',
+          data: {
+            'status': res.statusCode ?? 0,
+            'baseUrl': baseUrl,
+            'url': fullUrl,
+            'hasToken': (res.data is Map) && ((res.data['token'] ?? '').toString().trim().isNotEmpty),
+            'dataType': res.data.runtimeType.toString(),
+          },
+        ),
+      );
+      // #endregion
       final token = res.data['token'] as String?;
       if (token != null) {
         await AppStorage.write('jwt_token', token);
+        final user = res.data['user'];
+        if (user is Map) {
+          final nome = (user['nome'] ?? '').toString().trim();
+          final cpfUser = (user['cpf'] ?? '').toString().trim();
+          final id = (user['id'] ?? '').toString().trim();
+          if (nome.isNotEmpty) await AppStorage.write('usuario_nome', nome);
+          if (cpfUser.isNotEmpty) await AppStorage.write('usuario_cpf', _digitsOnly(cpfUser));
+          if (id.isNotEmpty) await AppStorage.write('usuario_id', id);
+        }
         return true;
       }
       return false;
     } on DioException catch (e) {
       final status = e.response?.statusCode ?? 0;
+      final baseUrl = _dio.options.baseUrl;
+      final fullUrl = '${baseUrl.replaceAll(RegExp(r'/*$'), '')}/auth/login';
+      final body = e.response?.data;
+      final bodyPreview = body == null ? '' : body.toString();
+      // #region debug-point H3:login-dio-exception
+      unawaited(
+        _reportFrontendDebug(
+          hypothesisId: status == 404 ? 'H3' : 'H1',
+          location: 'ApiService.login',
+          msg: 'Login falhou (DioException)',
+          data: {
+            'status': status,
+            'baseUrl': baseUrl,
+            'url': fullUrl,
+            'dioType': e.type.toString(),
+            'error': (e.error ?? '').toString(),
+            'bodyPreview': bodyPreview.length > 400 ? bodyPreview.substring(0, 400) : bodyPreview,
+          },
+        ),
+      );
+      // #endregion
       if (status == 401 || status == 403) return false;
       rethrow;
     }
@@ -439,12 +610,551 @@ class ApiService {
     return [];
   }
 
+  Future<List<dynamic>> listarAutoInfracaoDocumentos({
+    String? search,
+    String? cnpj,
+    String? status,
+    String? dataInicio,
+    String? dataFim,
+  }) async {
+    if (mockMode) return [];
+    await init();
+    final res = await _dio.get(
+      '/api/auto-infracao',
+      queryParameters: {
+        'search': search,
+        'cnpj': cnpj,
+        'status': status,
+        'data_inicio': dataInicio,
+        'data_fim': dataFim,
+      },
+    );
+    final data = res.data;
+    if (data is List) return data;
+    return [];
+  }
+
   Future<Map<String, dynamic>> salvarAutoTermo(Map<String, dynamic> payload) async {
     if (mockMode) return payload;
     await init();
     final res = await _dio.post('/api/auto-termo', data: payload);
     if (res.data is Map) return Map<String, dynamic>.from(res.data as Map);
     return payload;
+  }
+
+  Future<String?> proximoNumeroAutoInfracao(int ano) async {
+    if (mockMode) return null;
+    await init();
+    final res = await _dio.get('/api/auto-infracao/next-numero', queryParameters: {'ano': ano});
+    final data = res.data;
+    if (data is Map) {
+      final numero = (data['numero'] ?? '').toString().trim();
+      return numero.isEmpty ? null : numero;
+    }
+    return null;
+  }
+
+  Future<String?> proximoNumeroAutoIntimacao(int ano) async {
+    if (mockMode) return null;
+    await init();
+    final res = await _dio.get('/api/auto-intimacao/next-numero', queryParameters: {'ano': ano});
+    final data = res.data;
+    if (data is Map) {
+      final numero = (data['numero'] ?? '').toString().trim();
+      return numero.isEmpty ? null : numero;
+    }
+    return null;
+  }
+
+  Future<Map<String, dynamic>> salvarAutoInfracao({
+    required int ano,
+    required String status,
+    required Map<String, dynamic> dados,
+    String? dispositivo,
+  }) async {
+    if (mockMode) return {};
+    await init();
+    final res = await _dio.post('/api/auto-infracao', data: {
+      'ano': ano,
+      'status': status,
+      'dados': dados,
+      'dispositivo': dispositivo,
+    });
+    final data = res.data;
+    if (data is Map) return Map<String, dynamic>.from(data);
+    return {};
+  }
+
+  Future<Map<String, dynamic>> atualizarAutoInfracao({
+    required int id,
+    required String status,
+    required Map<String, dynamic> dados,
+    String? dispositivo,
+  }) async {
+    if (mockMode) return {};
+    await init();
+    final res = await _dio.put('/api/auto-infracao/$id', data: {
+      'status': status,
+      'dados': dados,
+      'dispositivo': dispositivo,
+    });
+    final data = res.data;
+    if (data is Map) return Map<String, dynamic>.from(data);
+    return {};
+  }
+
+  Future<Map<String, dynamic>> finalizarAutoInfracao(int id) async {
+    if (mockMode) return {};
+    await init();
+    final res = await _dio.post('/api/auto-infracao/$id/finalizar');
+    final data = res.data;
+    if (data is Map) return Map<String, dynamic>.from(data);
+    return {};
+  }
+
+  Future<Map<String, dynamic>> marcarAutoInfracaoSemEfeito({
+    required int id,
+    required String motivo,
+    String? dispositivo,
+  }) async {
+    if (mockMode) return {};
+    await init();
+    final res = await _dio.post('/api/auto-infracao/$id/sem-efeito', data: {'motivo': motivo, 'dispositivo': dispositivo});
+    final data = res.data;
+    if (data is Map) return Map<String, dynamic>.from(data);
+    return {};
+  }
+
+  Future<List<dynamic>> listarAutoInfracaoLogs(int id) async {
+    if (mockMode) return [];
+    await init();
+    final res = await _dio.get('/api/auto-infracao/$id/logs');
+    final data = res.data;
+    if (data is List) return data;
+    return [];
+  }
+
+  Future<List<dynamic>> listarAutoIntimacaoDocumentos({
+    String? search,
+    String? cnpj,
+    String? status,
+    String? dataInicio,
+    String? dataFim,
+  }) async {
+    if (mockMode) return [];
+    await init();
+    final res = await _dio.get(
+      '/api/auto-intimacao',
+      queryParameters: {
+        'search': search,
+        'cnpj': cnpj,
+        'status': status,
+        'data_inicio': dataInicio,
+        'data_fim': dataFim,
+      },
+    );
+    final data = res.data;
+    if (data is List) return data;
+    return [];
+  }
+
+  Future<Map<String, dynamic>> salvarAutoIntimacao({
+    required int ano,
+    required String status,
+    required Map<String, dynamic> dados,
+    String? dispositivo,
+    List<Map<String, dynamic>>? logs,
+  }) async {
+    if (mockMode) return {};
+    await init();
+    final res = await _dio.post('/api/auto-intimacao', data: {
+      'ano': ano,
+      'status': status,
+      'dados': dados,
+      'dispositivo': dispositivo,
+      'logs': logs,
+    });
+    final data = res.data;
+    if (data is Map) return Map<String, dynamic>.from(data);
+    return {};
+  }
+
+  Future<Map<String, dynamic>> atualizarAutoIntimacao({
+    required int id,
+    required String status,
+    required Map<String, dynamic> dados,
+    String? dispositivo,
+    List<Map<String, dynamic>>? logs,
+  }) async {
+    if (mockMode) return {};
+    await init();
+    final res = await _dio.put('/api/auto-intimacao/$id', data: {
+      'status': status,
+      'dados': dados,
+      'dispositivo': dispositivo,
+      'logs': logs,
+    });
+    final data = res.data;
+    if (data is Map) return Map<String, dynamic>.from(data);
+    return {};
+  }
+
+  Future<Map<String, dynamic>> finalizarAutoIntimacao(int id) async {
+    if (mockMode) return {};
+    await init();
+    final res = await _dio.post('/api/auto-intimacao/$id/finalizar');
+    final data = res.data;
+    if (data is Map) return Map<String, dynamic>.from(data);
+    return {};
+  }
+
+  Future<Map<String, dynamic>> marcarAutoIntimacaoSemEfeito({
+    required int id,
+    required String motivo,
+    String? dispositivo,
+  }) async {
+    if (mockMode) return {};
+    await init();
+    final res = await _dio.post('/api/auto-intimacao/$id/sem-efeito', data: {'motivo': motivo, 'dispositivo': dispositivo});
+    final data = res.data;
+    if (data is Map) return Map<String, dynamic>.from(data);
+    return {};
+  }
+
+  Future<List<dynamic>> listarAutoIntimacaoLogs(int id) async {
+    if (mockMode) return [];
+    await init();
+    final res = await _dio.get('/api/auto-intimacao/$id/logs');
+    final data = res.data;
+    if (data is List) return data;
+    return [];
+  }
+
+  Future<List<dynamic>> listarImposicaoPenalidadeDocumentos({
+    String? search,
+    String? cnpj,
+    String? status,
+    String? dataInicio,
+    String? dataFim,
+  }) async {
+    if (mockMode) return [];
+    await init();
+    final res = await _dio.get(
+      '/api/imposicao-penalidade',
+      queryParameters: {
+        'search': search,
+        'cnpj': cnpj,
+        'status': status,
+        'data_inicio': dataInicio,
+        'data_fim': dataFim,
+      },
+    );
+    final data = res.data;
+    if (data is List) return data;
+    return [];
+  }
+
+  Future<String?> proximoNumeroImposicaoPenalidade(int ano) async {
+    if (mockMode) return null;
+    await init();
+    final res = await _dio.get('/api/imposicao-penalidade/next-numero', queryParameters: {'ano': ano});
+    final data = res.data;
+    if (data is Map) {
+      final numero = (data['numero'] ?? '').toString().trim();
+      return numero.isEmpty ? null : numero;
+    }
+    return null;
+  }
+
+  Future<String?> proximoPasImposicaoPenalidade(int ano) async {
+    if (mockMode) return null;
+    await init();
+    final res = await _dio.get('/api/imposicao-penalidade/next-pas', queryParameters: {'ano': ano});
+    final data = res.data;
+    if (data is Map) {
+      final numero = (data['pas_numero'] ?? '').toString().trim();
+      return numero.isEmpty ? null : numero;
+    }
+    return null;
+  }
+
+  Future<Map<String, dynamic>> salvarImposicaoPenalidade({
+    required int ano,
+    required String status,
+    required Map<String, dynamic> dados,
+    String? dispositivo,
+  }) async {
+    if (mockMode) return {};
+    await init();
+    final res = await _dio.post('/api/imposicao-penalidade', data: {
+      'ano': ano,
+      'status': status,
+      'dados': dados,
+      'dispositivo': dispositivo,
+    });
+    final data = res.data;
+    if (data is Map) return Map<String, dynamic>.from(data);
+    return {};
+  }
+
+  Future<Map<String, dynamic>> atualizarImposicaoPenalidade({
+    required int id,
+    required String status,
+    required Map<String, dynamic> dados,
+    String? dispositivo,
+  }) async {
+    if (mockMode) return {};
+    await init();
+    final res = await _dio.put('/api/imposicao-penalidade/$id', data: {
+      'status': status,
+      'dados': dados,
+      'dispositivo': dispositivo,
+    });
+    final data = res.data;
+    if (data is Map) return Map<String, dynamic>.from(data);
+    return {};
+  }
+
+  Future<List<dynamic>> listarImposicaoPenalidadeLogs(int id) async {
+    if (mockMode) return [];
+    await init();
+    final res = await _dio.get('/api/imposicao-penalidade/$id/logs');
+    final data = res.data;
+    if (data is List) return data;
+    return [];
+  }
+
+  Future<List<dynamic>> listarAutoColetaAmostraDocumentos({
+    String? search,
+    String? cnpj,
+    String? status,
+    String? dataInicio,
+    String? dataFim,
+  }) async {
+    if (mockMode) return [];
+    await init();
+    final res = await _dio.get(
+      '/api/auto-coleta',
+      queryParameters: {
+        'search': search,
+        'cnpj': cnpj,
+        'status': status,
+        'data_inicio': dataInicio,
+        'data_fim': dataFim,
+      },
+    );
+    final data = res.data;
+    if (data is List) return data;
+    return [];
+  }
+
+  Future<String?> proximoNumeroAutoColetaAmostra(int ano) async {
+    if (mockMode) return null;
+    await init();
+    final res = await _dio.get('/api/auto-coleta/next-numero', queryParameters: {'ano': ano});
+    final data = res.data;
+    if (data is Map) {
+      final numero = (data['numero'] ?? '').toString().trim();
+      return numero.isEmpty ? null : numero;
+    }
+    return null;
+  }
+
+  Future<Map<String, dynamic>> salvarAutoColetaAmostra({
+    required int ano,
+    required String status,
+    required Map<String, dynamic> dados,
+    String? dispositivo,
+  }) async {
+    if (mockMode) return {};
+    await init();
+    final res = await _dio.post('/api/auto-coleta', data: {
+      'ano': ano,
+      'status': status,
+      'dados': dados,
+      'dispositivo': dispositivo,
+    });
+    final data = res.data;
+    if (data is Map) return Map<String, dynamic>.from(data);
+    return {};
+  }
+
+  Future<Map<String, dynamic>> atualizarAutoColetaAmostra({
+    required int id,
+    required String status,
+    required Map<String, dynamic> dados,
+    String? dispositivo,
+  }) async {
+    if (mockMode) return {};
+    await init();
+    final res = await _dio.put('/api/auto-coleta/$id', data: {
+      'status': status,
+      'dados': dados,
+      'dispositivo': dispositivo,
+    });
+    final data = res.data;
+    if (data is Map) return Map<String, dynamic>.from(data);
+    return {};
+  }
+
+  Future<List<dynamic>> listarAutoColetaAmostraLogs(int id) async {
+    if (mockMode) return [];
+    await init();
+    final res = await _dio.get('/api/auto-coleta/$id/logs');
+    final data = res.data;
+    if (data is List) return data;
+    return [];
+  }
+
+  Future<List<dynamic>> listarRelatorioInspecaoDocumentos({
+    String? search,
+    String? cnpj,
+    String? status,
+    String? dataInicio,
+    String? dataFim,
+  }) async {
+    if (mockMode) return [];
+    await init();
+    final res = await _dio.get(
+      '/api/relatorio-inspecao',
+      queryParameters: {
+        'search': search,
+        'cnpj': cnpj,
+        'status': status,
+        'data_inicio': dataInicio,
+        'data_fim': dataFim,
+      },
+    );
+    final data = res.data;
+    if (data is List) return data;
+    return [];
+  }
+
+  Future<String?> proximoNumeroRelatorioInspecao(int ano) async {
+    if (mockMode) return null;
+    await init();
+    final res = await _dio.get('/api/relatorio-inspecao/next-numero', queryParameters: {'ano': ano});
+    final data = res.data;
+    if (data is Map) {
+      final numero = (data['numero'] ?? '').toString().trim();
+      return numero.isEmpty ? null : numero;
+    }
+    return null;
+  }
+
+  Future<Map<String, dynamic>> salvarRelatorioInspecao({
+    required int ano,
+    required String status,
+    required Map<String, dynamic> dados,
+    String? dispositivo,
+  }) async {
+    if (mockMode) return {};
+    await init();
+    final res = await _dio.post('/api/relatorio-inspecao', data: {
+      'ano': ano,
+      'status': status,
+      'dados': dados,
+      'dispositivo': dispositivo,
+    });
+    final data = res.data;
+    if (data is Map) return Map<String, dynamic>.from(data);
+    return {};
+  }
+
+  Future<Map<String, dynamic>> atualizarRelatorioInspecao({
+    required int id,
+    required String status,
+    required Map<String, dynamic> dados,
+    String? dispositivo,
+  }) async {
+    if (mockMode) return {};
+    await init();
+    final res = await _dio.put('/api/relatorio-inspecao/$id', data: {
+      'status': status,
+      'dados': dados,
+      'dispositivo': dispositivo,
+    });
+    final data = res.data;
+    if (data is Map) return Map<String, dynamic>.from(data);
+    return {};
+  }
+
+  Future<List<dynamic>> listarRelatorioInspecaoLogs(int id) async {
+    if (mockMode) return [];
+    await init();
+    final res = await _dio.get('/api/relatorio-inspecao/$id/logs');
+    final data = res.data;
+    if (data is List) return data;
+    return [];
+  }
+
+  Future<List<dynamic>> listarBaseLegalGrupos() async {
+    if (mockMode) return [];
+    await init();
+    final res = await _dio.get('/api/base-legal/grupos');
+    final data = res.data;
+    if (data is List) return data;
+    return [];
+  }
+
+  Future<List<dynamic>> listarBaseLegalSubgrupos(String grupoId) async {
+    if (mockMode) return [];
+    await init();
+    final res = await _dio.get('/api/base-legal/subgrupos', queryParameters: {'grupoId': grupoId});
+    final data = res.data;
+    if (data is List) return data;
+    return [];
+  }
+
+  Future<List<dynamic>> listarBaseLegalEntries({
+    required String subgrupoId,
+    String? search,
+    int? limit,
+  }) async {
+    if (mockMode) return [];
+    await init();
+    final res = await _dio.get(
+      '/api/base-legal/entries',
+      queryParameters: {
+        'subgrupoId': subgrupoId,
+        'search': search,
+        'limit': limit,
+      },
+    );
+    final data = res.data;
+    if (data is List) return data;
+    return [];
+  }
+
+  Future<List<dynamic>> buscarBaseLegal({
+    required String query,
+    String? grupoId,
+    String? subgrupoId,
+    int? limit,
+  }) async {
+    if (mockMode) return [];
+    await init();
+    final res = await _dio.get(
+      '/api/base-legal/search',
+      queryParameters: {
+        'query': query,
+        'grupoId': grupoId,
+        'subgrupoId': subgrupoId,
+        'limit': limit,
+      },
+    );
+    final data = res.data;
+    if (data is List) return data;
+    return [];
+  }
+
+  Future<Map<String, dynamic>?> buscarBaseLegalDetalhe(String id) async {
+    if (mockMode) return null;
+    await init();
+    final res = await _dio.get('/api/base-legal/$id');
+    final data = res.data;
+    if (data is Map) return Map<String, dynamic>.from(data);
+    return null;
   }
 
   Future<Map<String, dynamic>?> buscarEstabelecimentoPorCnpj(String cnpj) async {
@@ -489,90 +1199,54 @@ class ApiService {
     }
     await init();
     final digits = _digitsOnly(cnpj);
-    bool isBlank(dynamic v) => v == null || (v is String && v.trim().isEmpty);
-    Map<String, dynamic> mergeWithFallback(Map<String, dynamic> primary, Map<String, dynamic> fallback) {
-      final merged = Map<String, dynamic>.from(primary);
-      final keys = [
-        'razaoSocial',
-        'razao_social',
-        'inscricaoMunicipal',
-        'inscricao_municipal',
-        'nomeFantasia',
-        'nome_fantasia',
-        'nome',
-        'endereco',
-        'logradouro',
-        'numero',
-        'bairro',
-        'cep',
-        'cidade',
-        'municipio',
-        'estado',
-        'uf',
-        'telefone',
-        'email',
-        'responsavel',
-        'cpf_responsavel',
-        'cpfResponsavel',
-        'cnae',
-        'cnaeDescricao',
-        'cnae_fiscal_descricao',
-      ];
-      for (final k in keys) {
-        if (merged.containsKey(k) && !isBlank(merged[k])) continue;
-        if (!fallback.containsKey(k)) continue;
-        if (isBlank(fallback[k])) continue;
-        merged[k] = fallback[k];
-      }
-      if (!merged.containsKey('cnpj') || isBlank(merged['cnpj'])) merged['cnpj'] = fallback['cnpj'];
-      return merged;
-    }
+    // #region debug-point A:buscar-estabelecimento
+    unawaited(
+      _reportFrontendDebug(
+        hypothesisId: 'A',
+        location: 'api.dart:buscarEstabelecimentoPorCnpj',
+        msg: '[DEBUG] Iniciando busca de estabelecimento por CNPJ',
+        data: {'cnpj': digits},
+      ),
+    );
+    // #endregion
     try {
-      final res0 = await _dio.get('/api/estabelecimentos/cnpj/$digits');
-      final data0 = res0.data;
-      if (data0 is Map<String, dynamic>) {
-        final shouldEnrich =
-            isBlank(data0['razaoSocial']) ||
-            isBlank(data0['razao_social']) ||
-            isBlank(data0['endereco']) ||
-            isBlank(data0['logradouro']) ||
-            isBlank(data0['cidade']) ||
-            isBlank(data0['municipio']) ||
-            isBlank(data0['estado']) ||
-            isBlank(data0['uf']);
-        if (!shouldEnrich) return data0;
-        try {
-          final res1 = await _dio.get('/api/cnpj/$digits');
-          final data1 = res1.data;
-          if (data1 is Map<String, dynamic>) return mergeWithFallback(data0, data1);
-        } on DioException {
-          return data0;
-        }
-        return data0;
-      }
-    } on DioException catch (e) {
-      final code = e.response?.statusCode ?? 0;
-      if (code == 401) return null;
-    }
-
-    try {
-      final res = await _dio.get('/api/cnpj/$digits');
+      final res = await _dio.get('/api/estabelecimentos/cnpj/$digits');
       final data = res.data;
-      if (data is Map<String, dynamic>) return data;
+      // #region debug-point A:buscar-estabelecimento
+      unawaited(
+        _reportFrontendDebug(
+          hypothesisId: 'A',
+          location: 'api.dart:buscarEstabelecimentoPorCnpj',
+          msg: '[DEBUG] Busca de estabelecimento concluida',
+          data: {
+            'cnpj': digits,
+            'statusCode': res.statusCode,
+            'dataTipo': data.runtimeType.toString(),
+            'dataKeys': data is Map ? data.keys.take(12).toList() : const <String>[],
+          },
+        ),
+      );
+      // #endregion
+      if (data is Map<String, dynamic>) return Map<String, dynamic>.from(data);
+      if (data is Map) return Map<String, dynamic>.from(data);
       return null;
     } on DioException catch (e) {
       final code = e.response?.statusCode ?? 0;
+      // #region debug-point A:buscar-estabelecimento
+      unawaited(
+        _reportFrontendDebug(
+          hypothesisId: 'A',
+          location: 'api.dart:buscarEstabelecimentoPorCnpj',
+          msg: '[DEBUG] Busca de estabelecimento falhou',
+          data: {
+            'cnpj': digits,
+            'statusCode': code,
+            'message': e.message,
+          },
+        ),
+      );
+      // #endregion
       if (code == 401) return null;
-      if (code == 404) {
-        try {
-          final res2 = await _dio.get('/cnpj/$digits');
-          final data2 = res2.data;
-          if (data2 is Map<String, dynamic>) return data2;
-          return null;
-        } on DioException {
-          return null;
-        }
-      }
       return null;
     }
   }
@@ -582,13 +1256,52 @@ class ApiService {
     await init();
     final digits = _digitsOnly(cnpj);
     if (digits.isEmpty) return null;
+    // #region debug-point A:buscar-estabelecimento-detalhe
+    unawaited(
+      _reportFrontendDebug(
+        hypothesisId: 'A',
+        location: 'api.dart:buscarEstabelecimentoDetalhe',
+        msg: '[DEBUG] Iniciando busca de detalhe de estabelecimento',
+        data: {'cnpj': digits},
+      ),
+    );
+    // #endregion
     try {
       final res = await _dio.get('/api/estabelecimentos/cnpj/$digits');
       final data = res.data;
+      // #region debug-point A:buscar-estabelecimento-detalhe
+      unawaited(
+        _reportFrontendDebug(
+          hypothesisId: 'A',
+          location: 'api.dart:buscarEstabelecimentoDetalhe',
+          msg: '[DEBUG] Busca de detalhe de estabelecimento concluida',
+          data: {
+            'cnpj': digits,
+            'statusCode': res.statusCode,
+            'dataTipo': data.runtimeType.toString(),
+            'dataKeys': data is Map ? data.keys.take(12).toList() : const <String>[],
+          },
+        ),
+      );
+      // #endregion
       if (data is Map<String, dynamic>) return data;
       if (data is Map) return Map<String, dynamic>.from(data);
       return null;
-    } on DioException {
+    } on DioException catch (e) {
+      // #region debug-point A:buscar-estabelecimento-detalhe
+      unawaited(
+        _reportFrontendDebug(
+          hypothesisId: 'A',
+          location: 'api.dart:buscarEstabelecimentoDetalhe',
+          msg: '[DEBUG] Busca de detalhe de estabelecimento falhou',
+          data: {
+            'cnpj': digits,
+            'statusCode': e.response?.statusCode,
+            'message': e.message,
+          },
+        ),
+      );
+      // #endregion
       return null;
     }
   }

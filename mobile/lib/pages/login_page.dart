@@ -42,7 +42,16 @@ class _LoginPageState extends State<LoginPage> {
     final savedCpf = await _api.readPreference('cpf');
     final savedAmb = await _api.readPreference('ambiente');
     final savedBase = await _api.readPreference('base_url');
-    final normalizedBase = normalizeSavedApiBaseUrl(savedBase);
+    var normalizedBase = normalizeSavedApiBaseUrl(savedBase);
+    if (!ApiService.mockMode && !kIsWeb && kReleaseMode) {
+      final forced = resolveDefaultApiBaseUrl();
+      final hasSaved = (savedBase ?? '').trim().isNotEmpty;
+      if (!hasSaved && normalizedBase != forced) {
+        normalizedBase = forced;
+        await _api.setBaseUrl(forced);
+        await _api.savePreference('base_url', forced);
+      }
+    }
     if (!ApiService.mockMode && savedBase != normalizedBase) {
       await _api.setBaseUrl(normalizedBase);
     }
@@ -68,6 +77,7 @@ class _LoginPageState extends State<LoginPage> {
     try {
       await _api.setBaseUrl(baseUrl);
       final ok = await _api.login(_cpfCtrl.text, _senhaCtrl.text).timeout(const Duration(seconds: 20));
+      if (!mounted) return;
       setState(() {
         _loading = false;
         _error = ok ? null : 'CPF ou senha inválidos';
@@ -81,6 +91,7 @@ class _LoginPageState extends State<LoginPage> {
       }
       return;
     } on TimeoutException {
+      if (!mounted) return;
       setState(() {
         _loading = false;
         _error = 'Tempo esgotado ao conectar ($baseUrl)';
@@ -89,11 +100,13 @@ class _LoginPageState extends State<LoginPage> {
       final detail = e.response?.statusCode != null
           ? 'HTTP ${e.response!.statusCode}'
           : (e.message ?? e.type.name);
+      if (!mounted) return;
       setState(() {
         _loading = false;
         _error = 'Não foi possível conectar ao servidor ($baseUrl). $detail';
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _loading = false;
         _error = 'Erro ao entrar: $e';

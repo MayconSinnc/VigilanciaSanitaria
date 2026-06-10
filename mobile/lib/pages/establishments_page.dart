@@ -159,6 +159,16 @@ class _EstablishmentsPageState extends State<EstablishmentsPage> {
     return text;
   }
 
+  String _firstNonEmpty(List<dynamic> values) {
+    for (final v in values) {
+      if (v == null) continue;
+      final text = '$v'.trim();
+      if (text.isEmpty || text == '-' || text == '--' || text == '()' || text == '- - ()') continue;
+      return text;
+    }
+    return '';
+  }
+
   /// Retorna cor baseada no risco
   Color _getRiskColor(String risco) {
     final lower = risco.toLowerCase();
@@ -413,7 +423,7 @@ class _EstablishmentsPageState extends State<EstablishmentsPage> {
   }
 
   Widget _buildApiEstablishmentCard(dynamic e) {
-    final nomeFantasia = _formatEmpty(e['nomeFantasia'] ?? e['razaoSocial']);
+    final nomeFantasia = _formatEmpty(_firstNonEmpty([e['razaoSocial'], e['razao_social'], e['nomeFantasia'], e['nome_fantasia'], e['nome']]));
     final cnpj = _formatEmpty(e['cnpj']);
     final cidade = _formatEmpty(e['cidade']);
     final alvara = _formatEmpty(e['status_alvara'] ?? e['statusAlvara'] ?? 'Regular');
@@ -472,7 +482,7 @@ class _EstablishmentsPageState extends State<EstablishmentsPage> {
   }
 
   Widget _buildLocalEstablishmentCard(Map<String, dynamic> e) {
-    final nomeFantasia = _formatEmpty(e['nome_fantasia'] ?? e['razao_social']);
+    final nomeFantasia = _formatEmpty(_firstNonEmpty([e['razao_social'], e['razaoSocial'], e['nome_fantasia'], e['nomeFantasia'], e['nome']]));
     final cnpj = _formatEmpty(e['cnpj']);
     final alvara = _formatEmpty(e['status_alvara'] ?? e['statusAlvara'] ?? 'Regular');
     final risco = _formatEmpty(e['risco'] ?? 'Indefinido');

@@ -10,6 +10,8 @@ export type EstabelecimentoComplemento = {
   latitude?: number | null;
   longitude?: number | null;
   classificacao_sanitaria_local?: string | null;
+  cnae?: string | null;
+  cnaeDescricao?: string | null;
   updatedAt: string;
 };
 

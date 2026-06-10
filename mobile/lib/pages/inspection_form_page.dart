@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:async';
-import 'package:dio/dio.dart';
 import '../ui/theme.dart';
 import '../widgets/inspection_header.dart';
 import '../services/api.dart';
@@ -35,25 +34,6 @@ class _InspectionFormPageState extends State<InspectionFormPage> {
   void _voltarOuDashboard() {
     Navigator.of(context).maybePop();
   }
-
-  // #region debug-point B:abrir-evidencias
-  void _debugAbrirEvidencias(String stage, Map<String, Object?> data) {
-    unawaited(Dio()
-        .post(
-          'http://127.0.0.1:7777/event',
-          data: {
-            'sessionId': 'web-evidence-save',
-            'runId': 'pre-fix',
-            'hypothesisId': 'B',
-            'location': 'inspection_form_page.dart:_abrirEvidencias',
-            'msg': '[DEBUG] abrir evidencias',
-            'data': {'stage': stage, ...data},
-            'ts': DateTime.now().millisecondsSinceEpoch,
-          },
-        )
-        .then<void>((_) {}, onError: (_) {}));
-  }
-  // #endregion
 
   @override
   void initState() {
@@ -103,7 +83,7 @@ class _InspectionFormPageState extends State<InspectionFormPage> {
             _telefone = (data['telefone'] ?? '')?.toString() ?? '';
             _responsavel = (data['responsavel'] ?? '')?.toString() ?? '';
             _inscricaoMunicipal = (data['inscricaoMunicipal'] ?? data['inscricao_municipal'] ?? '')?.toString() ?? '';
-            final nome = _nomeFantasia.trim().isNotEmpty ? _nomeFantasia.trim() : _razaoSocial.trim();
+            final nome = _razaoSocial.trim().isNotEmpty ? _razaoSocial.trim() : _nomeFantasia.trim();
             if (nome.isNotEmpty) _nomeEstabelecimento = nome;
           });
         } catch (_) {}
@@ -114,12 +94,6 @@ class _InspectionFormPageState extends State<InspectionFormPage> {
   String _digitsOnly(String v) => v.replaceAll(RegExp(r'\D'), '');
 
   Future<void> _abrirEvidencias() async {
-    _debugAbrirEvidencias('start', {
-      'isWeb': kIsWeb,
-      'cnpj': _digitsOnly(_cnpj.text),
-      'estabelecimentoId': _estabelecimentoId,
-      'inspecaoId': _inspecaoId,
-    });
     if (!kIsWeb) {
       Navigator.pushNamed(context, '/evidencias');
       return;
@@ -134,10 +108,6 @@ class _InspectionFormPageState extends State<InspectionFormPage> {
       if (_estabelecimentoId == null) {
         final data = await _api.buscarEstabelecimentoPorCnpj(cnpjDigits);
         _estabelecimentoId = (data?['id'] as num?)?.toInt();
-        _debugAbrirEvidencias('loaded-estabelecimento', {
-          'cnpj': cnpjDigits,
-          'estabelecimentoId': _estabelecimentoId,
-        });
       }
       if (_estabelecimentoId == null) {
         if (!mounted) return;
@@ -151,10 +121,6 @@ class _InspectionFormPageState extends State<InspectionFormPage> {
           descricao: _motivo.text.trim().isEmpty ? null : _motivo.text.trim(),
         );
         _inspecaoId = (created?['id'] as num?)?.toInt();
-        _debugAbrirEvidencias('created-inspecao', {
-          'estabelecimentoId': _estabelecimentoId,
-          'inspecaoId': _inspecaoId,
-        });
       }
       if (_inspecaoId == null) {
         if (!mounted) return;
@@ -162,14 +128,8 @@ class _InspectionFormPageState extends State<InspectionFormPage> {
         return;
       }
       if (!mounted) return;
-      _debugAbrirEvidencias('push-route', {'inspecaoId': _inspecaoId});
       Navigator.pushNamed(context, '/evidencias', arguments: {'inspecaoId': _inspecaoId});
     } catch (_) {
-      _debugAbrirEvidencias('error', {
-        'cnpj': cnpjDigits,
-        'estabelecimentoId': _estabelecimentoId,
-        'inspecaoId': _inspecaoId,
-      });
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Não foi possível abrir evidências.')));
     }

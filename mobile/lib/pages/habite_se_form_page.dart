@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:dio/dio.dart';
 import '../services/api.dart';
 import '../storage/db.dart';
 import '../ui/theme.dart';
@@ -57,6 +56,7 @@ class _HabiteSeFormPageState extends State<HabiteSeFormPage> {
   // Step 4 - Vistoria
   final _dataVistoriaCtrl = TextEditingController();
   final _horaVistoriaCtrl = TextEditingController();
+  TimeOfDay? _horaVistoria;
   final _situacaoEncontradaCtrl = TextEditingController();
   final _parecerPreliminarCtrl = TextEditingController();
   final _pendenciasCtrl = TextEditingController();
@@ -75,14 +75,29 @@ class _HabiteSeFormPageState extends State<HabiteSeFormPage> {
   // State
   int _step = 0;
   bool _saving = false;
+  String _usuarioNomeLogado = '';
 
   final _api = ApiService();
 
   @override
   void initState() {
     super.initState();
-    _dataSolicitacaoCtrl.text = DateTime.now().toIso8601String().substring(0, 10);
+    final now = DateTime.now();
+    final today = '${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year}';
+    _dataSolicitacaoCtrl.text = today;
+    _dataVistoriaCtrl.text = today;
     _protocoloCtrl.text = _generateProtocolo();
+    _prefillUsuarioLogado();
+  }
+
+  Future<void> _prefillUsuarioLogado() async {
+    try {
+      final nome = (await _api.readPreference('usuario_nome'))?.trim() ?? '';
+      if (!mounted) return;
+      if (nome.isEmpty) return;
+      setState(() => _usuarioNomeLogado = nome);
+      _responsavelTecnicoCtrl.text = nome;
+    } catch (_) {}
   }
 
   @override
@@ -120,6 +135,10 @@ class _HabiteSeFormPageState extends State<HabiteSeFormPage> {
     final year = DateTime.now().year;
     final random = (DateTime.now().millisecondsSinceEpoch % 999999).toString().padLeft(6, '0');
     return 'HB-$year-$random';
+  }
+
+  String _formatTime(TimeOfDay time) {
+    return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
   }
 
   /// Valida o step atual
@@ -199,9 +218,9 @@ class _HabiteSeFormPageState extends State<HabiteSeFormPage> {
     }
 
     // Validar Step 3
-    if (_responsavelTecnicoCtrl.text.trim().isEmpty) {
+    if (_usuarioNomeLogado.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Responsável técnico é obrigatório'), backgroundColor: AppColors.vermelho),
+        const SnackBar(content: Text('Usuário logado não identificado. Faça login novamente.'), backgroundColor: AppColors.vermelho),
       );
       return false;
     }
@@ -278,7 +297,7 @@ class _HabiteSeFormPageState extends State<HabiteSeFormPage> {
           'pavimentos': int.tryParse(_pavimentosCtrl.text),
         },
         'responsavel_tecnico': {
-          'nome': _responsavelTecnicoCtrl.text,
+          'nome': _usuarioNomeLogado.trim(),
           'crea': _creaCauCtrl.text.trim().isEmpty ? null : _creaCauCtrl.text,
           'telefone': _telefoneTecnicoCtrl.text.trim().isEmpty ? null : _telefoneTecnicoCtrl.text,
           'email': _emailTecnicoCtrl.text.trim().isEmpty ? null : _emailTecnicoCtrl.text,
@@ -322,7 +341,7 @@ class _HabiteSeFormPageState extends State<HabiteSeFormPage> {
           'bairro': _bairroCtrl.text,
           'cidade': _cidadeCtrl.text,
           'uf': _ufCtrl.text,
-          'responsavel': _responsavelTecnicoCtrl.text,
+          'responsavel': _usuarioNomeLogado.trim(),
           'data_cadastro': DateTime.now().toIso8601String(),
           ...payload,
         });
@@ -628,10 +647,29 @@ class _HabiteSeFormPageState extends State<HabiteSeFormPage> {
         children: [
           const Text('Responsável Técnico', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 12),
-          OfficialTextField(
-            controller: _responsavelTecnicoCtrl,
-            label: 'Nome do Responsável Técnico',
-            required: true,
+          Card(
+            elevation: 0,
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text('Técnico responsável logado', style: TextStyle(fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 6),
+                  Text(_usuarioNomeLogado.trim().isEmpty ? 'Não identificado' : _usuarioNomeLogado.trim()),
+                ],
+              ),
+            ),
+          ),
+          FormField<bool>(
+            validator: (_) => _usuarioNomeLogado.trim().isEmpty ? 'Usuário logado não identificado. Faça login novamente.' : null,
+            builder: (state) {
+              if (state.errorText == null) return const SizedBox.shrink();
+              return Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(state.errorText!, style: const TextStyle(color: AppColors.vermelho)),
+              );
+            },
           ),
           const SizedBox(height: 12),
           OfficialTextField(
@@ -684,9 +722,13 @@ class _HabiteSeFormPageState extends State<HabiteSeFormPage> {
           ),
           const SizedBox(height: 12),
           OfficialTimeField(
-            controller: _horaVistoriaCtrl,
+            value: _horaVistoria,
             label: 'Hora da Vistoria',
             required: false,
+            onChanged: (picked) {
+              setState(() => _horaVistoria = picked);
+              _horaVistoriaCtrl.text = picked == null ? '' : _formatTime(picked);
+            },
           ),
           const SizedBox(height: 12),
           OfficialTextField(
@@ -821,7 +863,7 @@ class _HabiteSeFormPageState extends State<HabiteSeFormPage> {
             ]),
             const SizedBox(height: 16),
             _buildReviewSection('Responsáveis', [
-              _rowResumo('Responsável Técnico', _responsavelTecnicoCtrl.text.isEmpty ? 'Não informado' : _responsavelTecnicoCtrl.text),
+              _rowResumo('Responsável Técnico', _usuarioNomeLogado.trim().isEmpty ? 'Não informado' : _usuarioNomeLogado.trim()),
               _rowResumo('CREA/CAU', _creaCauCtrl.text.isEmpty ? 'Não informado' : _creaCauCtrl.text),
               _rowResumo('Fiscal Responsável', _fiscalResponsavelCtrl.text.isEmpty ? 'Não informado' : _fiscalResponsavelCtrl.text),
             ]),

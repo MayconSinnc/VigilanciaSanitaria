@@ -55,6 +55,11 @@ class OfficialTextField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final int? effectiveMinLines = multiline ? (minLines ?? 4) : null;
+    final int? requestedMaxLines = multiline ? ((maxLines == null || maxLines == 1) ? null : maxLines) : 1;
+    final int? effectiveMaxLines =
+        multiline ? ((requestedMaxLines == null || requestedMaxLines < (effectiveMinLines ?? 1)) ? effectiveMinLines : requestedMaxLines) : 1;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -86,10 +91,10 @@ class OfficialTextField extends StatelessWidget {
         TextFormField(
           controller: controller,
           initialValue: controller == null ? initialValue : null,
-          enabled: enabled && !readOnly,
+          enabled: enabled,
           readOnly: readOnly,
-          maxLines: multiline ? (maxLines ?? 4) : 1,
-          minLines: multiline ? (minLines ?? 4) : null,
+          maxLines: multiline ? effectiveMaxLines : 1,
+          minLines: multiline ? effectiveMinLines : null,
           keyboardType: keyboardType,
           inputFormatters: inputFormatters,
           onChanged: onChanged,
@@ -733,6 +738,7 @@ class OfficialDateField extends StatelessWidget {
   final String? hint;
   final bool required;
   final bool enabled;
+  final bool autoFillNow;
   final ValueChanged<DateTime?>? onChanged;
   final String? Function(DateTime?)? validator;
 
@@ -744,21 +750,71 @@ class OfficialDateField extends StatelessWidget {
     this.hint,
     this.required = false,
     this.enabled = true,
+    this.autoFillNow = true,
     this.onChanged,
     this.validator,
   });
 
+  String _formatDate(DateTime date) {
+    return '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
+  }
+
+  DateTime? _tryParseDate(String input) {
+    final m = RegExp(r'^(\d{2})/(\d{2})/(\d{4})$').firstMatch(input.trim());
+    if (m == null) return null;
+    final day = int.tryParse(m.group(1) ?? '');
+    final month = int.tryParse(m.group(2) ?? '');
+    final year = int.tryParse(m.group(3) ?? '');
+    if (day == null || month == null || year == null) return null;
+    final parsed = DateTime(year, month, day);
+    if (parsed.year != year || parsed.month != month || parsed.day != day) return null;
+    return parsed;
+  }
+
   @override
   Widget build(BuildContext context) {
     if (controller != null) {
+      final c = controller!;
+      if (autoFillNow && c.text.trim().isEmpty) {
+        c.text = _formatDate(DateTime.now());
+      }
+      final initial = _tryParseDate(c.text) ?? value ?? DateTime.now();
+      Future<void> pick() async {
+        final picked = await showDatePicker(
+          context: context,
+          initialDate: initial,
+          firstDate: DateTime(2000),
+          lastDate: DateTime(2100),
+        );
+        if (picked != null) {
+          c.text = _formatDate(picked);
+          onChanged?.call(picked);
+        }
+      }
       return OfficialTextField(
-        controller: controller,
+        controller: c,
         label: label,
         hint: hint ?? 'DD/MM/AAAA',
         required: required,
         enabled: enabled,
         keyboardType: TextInputType.datetime,
         inputFormatters: [DateInputFormatter()],
+        readOnly: true,
+        onTap: enabled ? pick : null,
+        validator: (text) {
+          final raw = text?.trim() ?? '';
+          if (raw.isEmpty) {
+            return required ? 'Campo obrigatório' : null;
+          }
+          final parsed = _tryParseDate(raw);
+          if (parsed == null) return 'Data inválida';
+          if (validator != null) return validator!(parsed);
+          return null;
+        },
+        suffixIcon: IconButton(
+          onPressed: enabled ? pick : null,
+          icon: const Icon(Icons.calendar_today_outlined),
+        ),
       );
     }
 
@@ -978,6 +1034,68 @@ class OfficialCepField extends StatelessWidget {
       inputFormatters: [CepInputFormatter()],
       onChanged: onChanged,
       validator: validator,
+    );
+  }
+}
+
+class OfficialSignatureField extends StatelessWidget {
+  final String label;
+  final Uint8List? value;
+  final bool required;
+  final bool enabled;
+  final VoidCallback onPick;
+  final VoidCallback onClear;
+
+  const OfficialSignatureField({
+    super.key,
+    required this.label,
+    required this.value,
+    this.required = false,
+    this.enabled = true,
+    required this.onPick,
+    required this.onClear,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final borderColor = value == null && required ? Colors.red.shade700 : const Color(0xFFE0E0E0);
+    final labelColor = value == null && required ? Colors.red.shade700 : Colors.black87;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          required ? '$label *' : label,
+          style: TextStyle(fontWeight: FontWeight.w700, color: labelColor),
+        ),
+        const SizedBox(height: 8),
+        InkWell(
+          onTap: enabled ? onPick : null,
+          child: Container(
+            width: double.infinity,
+            height: 140,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF7F7F7),
+              border: Border.all(color: borderColor),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            alignment: Alignment.center,
+            child: value == null
+                ? Text(enabled ? 'Toque para assinar' : '', style: const TextStyle(color: Colors.black54))
+                : Image.memory(value!, fit: BoxFit.contain),
+          ),
+        ),
+        if (value != null) ...[
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: enabled ? onClear : null,
+              icon: const Icon(Icons.delete_outline),
+              label: const Text('Limpar assinatura'),
+            ),
+          ),
+        ],
+      ],
     );
   }
 }

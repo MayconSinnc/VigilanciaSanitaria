@@ -283,11 +283,11 @@ class _RiskProfilePageState extends State<RiskProfilePage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        _formatEmpty(est['nome_fantasia'] ?? est['nome'] ?? est['nomeFantasia']),
+                        _formatEmpty(est['razao_social'] ?? est['razaoSocial'] ?? est['nome_fantasia'] ?? est['nome'] ?? est['nomeFantasia']),
                         style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                       ),
                       Text(
-                        _formatEmpty(est['razao_social'] ?? est['razaoSocial'] ?? ''),
+                        _formatEmpty(est['nome_fantasia'] ?? est['nome'] ?? est['nomeFantasia'] ?? ''),
                         style: TextStyle(color: Colors.grey[600]),
                       ),
                     ],

@@ -10,6 +10,66 @@ export function registerEstabelecimentosApi(app: FastifyInstance) {
     return `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12, 14)}`;
   };
 
+  const isBlank = (v: any) => v === null || v === undefined || (typeof v === 'string' && v.trim().length === 0);
+
+  const fetchBrasilApiMapped = async (digits: string): Promise<Record<string, any> | null> => {
+    const d = String(digits ?? '').replace(/\D/g, '').slice(0, 14);
+    if (d.length !== 14) return null;
+    try {
+      const url = `https://brasilapi.com.br/api/cnpj/v1/${d}`;
+      const res = await fetch(url, {
+        headers: {
+          accept: 'application/json',
+          'user-agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+        },
+      });
+      if (!res.ok) return null;
+      const data: any = await res.json();
+      return {
+        cnpj: data.cnpj || d,
+        razaoSocial: data.razao_social || data['razao_social'] || '',
+        nomeFantasia: data.nome_fantasia || data['nome_fantasia'] || '',
+        endereco: data.logradouro || '',
+        numero: data.numero || '',
+        bairro: data.bairro || '',
+        cidade: data.municipio || '',
+        estado: data.uf || '',
+        cep: data.cep || '',
+        cnae: data.cnae_fiscal || data['cnae_fiscal'] || '',
+        cnaeDescricao: data.cnae_fiscal_descricao || '',
+      };
+    } catch {
+      return null;
+    }
+  };
+
+  const mergeWithFallback = (primary: Record<string, any>, fallback: Record<string, any>) => {
+    const merged = { ...primary };
+    const keys = [
+      'razaoSocial',
+      'razao_social',
+      'nomeFantasia',
+      'nome_fantasia',
+      'endereco',
+      'logradouro',
+      'numero',
+      'bairro',
+      'cidade',
+      'municipio',
+      'estado',
+      'uf',
+      'cep',
+      'cnaeDescricao',
+    ];
+    for (const k of keys) {
+      if (!isBlank(merged[k])) continue;
+      if (isBlank((fallback as any)[k])) continue;
+      (merged as any)[k] = (fallback as any)[k];
+    }
+    return merged;
+  };
+
   app.get('/api/estabelecimentos', { preValidation: [app.authenticate] }, async (request, reply) => {
     const qSchema = z.object({ search: z.string().optional(), limit: z.string().optional(), offset: z.string().optional() });
     const parsed = qSchema.safeParse(request.query);
@@ -103,12 +163,97 @@ export function registerEstabelecimentosApi(app: FastifyInstance) {
     if (digits.length < 11) return reply.code(400).send({ error: 'CNPJ inválido' });
     const cnpj = formatCnpj(digits);
 
+    const local = await app.prisma.estabelecimento.findFirst({
+      where: { OR: [{ cnpj: digits }, { cnpj }] },
+    });
+    if (local) {
+      const complemento = getEstabelecimentoComplemento(local.id);
+      let cnae = (complemento as any)?.cnae ?? '';
+      let cnaeDescricao = (complemento as any)?.cnaeDescricao ?? '';
+      if (isBlank(cnae) && isBlank(cnaeDescricao)) {
+        const brasilApi = await fetchBrasilApiMapped(digits);
+        if (brasilApi) {
+          cnae = String(brasilApi.cnae ?? '');
+          cnaeDescricao = String(brasilApi.cnaeDescricao ?? '');
+          saveEstabelecimentoComplemento(local.id, { cnae: cnae || null, cnaeDescricao: cnaeDescricao || null });
+        }
+      }
+      return reply.send({
+        ...local,
+        telefone: complemento?.telefone ?? local.telefone,
+        email: complemento?.email ?? local.email,
+        responsavel_local: complemento?.responsavel_local ?? null,
+        observacoes: complemento?.observacoes ?? null,
+        latitude: complemento?.latitude ?? local.latitude ?? null,
+        longitude: complemento?.longitude ?? local.longitude ?? null,
+        classificacao_sanitaria_local: complemento?.classificacao_sanitaria_local ?? null,
+        cnae,
+        cnaeDescricao,
+        origem_dados: 'Local',
+        ultima_sincronizacao: null,
+        complemento,
+      });
+    }
+
     try {
       const economicos = await buscarEconomicosPorCnpj(digits);
       const list = Array.isArray(economicos)
         ? economicos
         : (economicos?.data ?? economicos?.items ?? economicos?.results ?? []);
-      if (!Array.isArray(list) || list.length === 0) return reply.code(404).send({ error: 'Empresa não encontrada' });
+      if (!Array.isArray(list) || list.length === 0) {
+        const brasilApi = await fetchBrasilApiMapped(digits);
+        if (!brasilApi) return reply.code(404).send({ error: 'Empresa não encontrada' });
+
+        const saved = await app.prisma.estabelecimento.upsert({
+          where: { cnpj },
+          update: {
+            razaoSocial: String(brasilApi.razaoSocial ?? ''),
+            nomeFantasia: String(brasilApi.nomeFantasia ?? ''),
+            endereco: String(brasilApi.endereco ?? ''),
+            numero: String(brasilApi.numero ?? ''),
+            bairro: String(brasilApi.bairro ?? ''),
+            cidade: String(brasilApi.cidade ?? ''),
+            estado: String(brasilApi.estado ?? ''),
+            uf: String(brasilApi.estado ?? ''),
+            cep: String(brasilApi.cep ?? ''),
+          },
+          create: {
+            cnpj,
+            razaoSocial: String(brasilApi.razaoSocial ?? ''),
+            nomeFantasia: String(brasilApi.nomeFantasia ?? ''),
+            endereco: String(brasilApi.endereco ?? ''),
+            numero: String(brasilApi.numero ?? ''),
+            bairro: String(brasilApi.bairro ?? ''),
+            cidade: String(brasilApi.cidade ?? ''),
+            estado: String(brasilApi.estado ?? ''),
+            uf: String(brasilApi.estado ?? ''),
+            cep: String(brasilApi.cep ?? ''),
+          },
+        });
+
+        const complemento = getEstabelecimentoComplemento(saved.id);
+        if (!isBlank(brasilApi.cnaeDescricao)) {
+          saveEstabelecimentoComplemento(saved.id, {
+            cnae: (brasilApi.cnae ?? '') ? String(brasilApi.cnae) : null,
+            cnaeDescricao: String(brasilApi.cnaeDescricao ?? '') || null,
+          });
+        }
+        return reply.send({
+          ...saved,
+          telefone: complemento?.telefone ?? saved.telefone,
+          email: complemento?.email ?? saved.email,
+          responsavel_local: complemento?.responsavel_local ?? null,
+          observacoes: complemento?.observacoes ?? null,
+          latitude: complemento?.latitude ?? saved.latitude ?? null,
+          longitude: complemento?.longitude ?? saved.longitude ?? null,
+          classificacao_sanitaria_local: complemento?.classificacao_sanitaria_local ?? null,
+          cnae: brasilApi.cnae ?? '',
+          cnaeDescricao: brasilApi.cnaeDescricao ?? '',
+          origem_dados: 'BrasilAPI',
+          ultima_sincronizacao: new Date().toISOString(),
+          complemento,
+        });
+      }
       const empresa = list[0] as any;
 
       const contribuinte = empresa.contribuinte ?? {};
@@ -178,6 +323,36 @@ export function registerEstabelecimentosApi(app: FastifyInstance) {
       const cnae = cnaePrincipal.codigo ?? empresa.cnae ?? empresa.cnaePrincipal ?? empresa['cnae'] ?? empresa['cnae_principal'] ?? '';
       const cnaeDescricao = cnaePrincipal.denominacao ?? '';
 
+      const brasilApi = await fetchBrasilApiMapped(digits);
+      const mergedBase = brasilApi
+        ? mergeWithFallback(
+            {
+              razaoSocial: String(razaoSocial ?? ''),
+              nomeFantasia: String(nomeFantasia ?? ''),
+              endereco: String(endereco ?? ''),
+              numero: String(numero ?? ''),
+              bairro: String(bairro ?? ''),
+              cidade: String(cidade ?? ''),
+              estado: String(estado ?? ''),
+              uf: String(estado ?? ''),
+              cep: String(cep ?? ''),
+              cnaeDescricao,
+            },
+            brasilApi,
+          )
+        : {
+            razaoSocial: String(razaoSocial ?? ''),
+            nomeFantasia: String(nomeFantasia ?? ''),
+            endereco: String(endereco ?? ''),
+            numero: String(numero ?? ''),
+            bairro: String(bairro ?? ''),
+            cidade: String(cidade ?? ''),
+            estado: String(estado ?? ''),
+            uf: String(estado ?? ''),
+            cep: String(cep ?? ''),
+            cnaeDescricao,
+          };
+
       let alvara: any = null;
       let alvarasHistorico: any[] = [];
       let debitosHistorico: any[] = [];
@@ -208,33 +383,39 @@ export function registerEstabelecimentosApi(app: FastifyInstance) {
       const saved = await app.prisma.estabelecimento.upsert({
         where: { cnpj },
         update: {
-          razaoSocial: String(razaoSocial ?? ''),
-          nomeFantasia: String(nomeFantasia ?? ''),
-          endereco: String(endereco ?? ''),
-          numero: String(numero ?? ''),
-          bairro: String(bairro ?? ''),
-          cidade: String(cidade ?? ''),
-          estado: String(estado ?? ''),
-          uf: String(estado ?? ''),
-          cep: String(cep ?? ''),
+          razaoSocial: String(mergedBase.razaoSocial ?? ''),
+          nomeFantasia: String(mergedBase.nomeFantasia ?? ''),
+          endereco: String(mergedBase.endereco ?? ''),
+          numero: String(mergedBase.numero ?? ''),
+          bairro: String(mergedBase.bairro ?? ''),
+          cidade: String(mergedBase.cidade ?? ''),
+          estado: String(mergedBase.estado ?? ''),
+          uf: String(mergedBase.uf ?? mergedBase.estado ?? ''),
+          cep: String(mergedBase.cep ?? ''),
           inscricaoMunicipal: String(inscricaoMunicipal ?? ''),
         },
         create: {
           cnpj,
-          razaoSocial: String(razaoSocial ?? ''),
-          nomeFantasia: String(nomeFantasia ?? ''),
-          endereco: String(endereco ?? ''),
-          numero: String(numero ?? ''),
-          bairro: String(bairro ?? ''),
-          cidade: String(cidade ?? ''),
-          estado: String(estado ?? ''),
-          uf: String(estado ?? ''),
-          cep: String(cep ?? ''),
+          razaoSocial: String(mergedBase.razaoSocial ?? ''),
+          nomeFantasia: String(mergedBase.nomeFantasia ?? ''),
+          endereco: String(mergedBase.endereco ?? ''),
+          numero: String(mergedBase.numero ?? ''),
+          bairro: String(mergedBase.bairro ?? ''),
+          cidade: String(mergedBase.cidade ?? ''),
+          estado: String(mergedBase.estado ?? ''),
+          uf: String(mergedBase.uf ?? mergedBase.estado ?? ''),
+          cep: String(mergedBase.cep ?? ''),
           inscricaoMunicipal: String(inscricaoMunicipal ?? ''),
         },
       });
 
       const complemento = getEstabelecimentoComplemento(saved.id);
+      if (!isBlank(cnae) || !isBlank(mergedBase.cnaeDescricao ?? cnaeDescricao)) {
+        saveEstabelecimentoComplemento(saved.id, {
+          cnae: String(cnae ?? '') || null,
+          cnaeDescricao: String((mergedBase.cnaeDescricao ?? cnaeDescricao) ?? '') || null,
+        });
+      }
 
       return reply.send({
         ...saved,
@@ -246,7 +427,7 @@ export function registerEstabelecimentosApi(app: FastifyInstance) {
         longitude: complemento?.longitude ?? saved.longitude ?? null,
         classificacao_sanitaria_local: complemento?.classificacao_sanitaria_local ?? null,
         cnae,
-        cnaeDescricao,
+        cnaeDescricao: (mergedBase.cnaeDescricao ?? cnaeDescricao) as any,
         economico: empresa,
         alvara,
         alvaras: alvarasHistorico,
@@ -260,8 +441,64 @@ export function registerEstabelecimentosApi(app: FastifyInstance) {
       const code = err?.code;
       const upstreamStatus = err?.statusCode;
       const upstreamBody = err?.body;
+      const brasilApi = await fetchBrasilApiMapped(digits);
+      if (brasilApi) {
+        const saved = await app.prisma.estabelecimento.upsert({
+          where: { cnpj },
+          update: {
+            razaoSocial: String(brasilApi.razaoSocial ?? ''),
+            nomeFantasia: String(brasilApi.nomeFantasia ?? ''),
+            endereco: String(brasilApi.endereco ?? ''),
+            numero: String(brasilApi.numero ?? ''),
+            bairro: String(brasilApi.bairro ?? ''),
+            cidade: String(brasilApi.cidade ?? ''),
+            estado: String(brasilApi.estado ?? ''),
+            uf: String(brasilApi.estado ?? ''),
+            cep: String(brasilApi.cep ?? ''),
+          },
+          create: {
+            cnpj,
+            razaoSocial: String(brasilApi.razaoSocial ?? ''),
+            nomeFantasia: String(brasilApi.nomeFantasia ?? ''),
+            endereco: String(brasilApi.endereco ?? ''),
+            numero: String(brasilApi.numero ?? ''),
+            bairro: String(brasilApi.bairro ?? ''),
+            cidade: String(brasilApi.cidade ?? ''),
+            estado: String(brasilApi.estado ?? ''),
+            uf: String(brasilApi.estado ?? ''),
+            cep: String(brasilApi.cep ?? ''),
+          },
+        });
+        const complemento = getEstabelecimentoComplemento(saved.id);
+        if (!isBlank(brasilApi.cnaeDescricao)) {
+          saveEstabelecimentoComplemento(saved.id, {
+            cnae: (brasilApi.cnae ?? '') ? String(brasilApi.cnae) : null,
+            cnaeDescricao: String(brasilApi.cnaeDescricao ?? '') || null,
+          });
+        }
+        return reply.send({
+          ...saved,
+          telefone: complemento?.telefone ?? saved.telefone,
+          email: complemento?.email ?? saved.email,
+          responsavel_local: complemento?.responsavel_local ?? null,
+          observacoes: complemento?.observacoes ?? null,
+          latitude: complemento?.latitude ?? saved.latitude ?? null,
+          longitude: complemento?.longitude ?? saved.longitude ?? null,
+          classificacao_sanitaria_local: complemento?.classificacao_sanitaria_local ?? null,
+          cnae: brasilApi.cnae ?? '',
+          cnaeDescricao: brasilApi.cnaeDescricao ?? '',
+          origem_dados: 'BrasilAPI',
+          ultima_sincronizacao: new Date().toISOString(),
+          complemento,
+          epublica_erro: code === 'EPUBLICA_NOT_CONFIGURED' ? 'EPUBLICA_NOT_CONFIGURED' : upstreamStatus ?? null,
+          epublica_body: process.env.NODE_ENV !== 'production' ? upstreamBody ?? null : null,
+        });
+      }
+
       if (code === 'EPUBLICA_NOT_CONFIGURED') {
-        return reply.code(503).send({ error: 'E-Pública não configurada. Defina EPUBLICA_X_API_KEY/EPUBLICA_X_ALIAS/EPUBLICA_X_NOME_CHAVE (ou EPUBLICA_TOKEN) no backend.' });
+        return reply
+          .code(503)
+          .send({ error: 'E-Pública não configurada. Defina EPUBLICA_X_API_KEY/EPUBLICA_X_ALIAS/EPUBLICA_X_NOME_CHAVE (ou EPUBLICA_TOKEN) no backend.' });
       }
       if (upstreamStatus === 401) {
         return reply.code(502).send({ error: 'E-Pública respondeu Unauthorized. Verifique as credenciais configuradas no backend.' });
@@ -324,8 +561,10 @@ export function registerEstabelecimentosApi(app: FastifyInstance) {
     }
 
     const b = parsed.data;
+    const cnpjDigits = String(b.cnpj ?? '').replace(/\D/g, '');
+    const cnpjNormalized = cnpjDigits.length === 14 ? formatCnpj(cnpjDigits) : b.cnpj;
     const data: any = {
-      cnpj: b.cnpj,
+      cnpj: cnpjNormalized,
       razaoSocial: b.razaoSocial ?? b.razao_social ?? '',
       nomeFantasia: b.nomeFantasia ?? b.nome_fantasia ?? '',
       endereco: b.endereco ?? b.logradouro ?? '',

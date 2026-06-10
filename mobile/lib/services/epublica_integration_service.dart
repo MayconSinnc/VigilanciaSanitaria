@@ -9,6 +9,7 @@ class ImportResult {
     required this.atualizados,
     required this.ignorados,
     required this.erros,
+    this.connectionError = false,
     this.ultimaSincronizacao,
     this.message,
   });
@@ -18,6 +19,7 @@ class ImportResult {
   final int atualizados;
   final int ignorados;
   final List<String> erros;
+  final bool connectionError;
   final String? ultimaSincronizacao;
   final String? message;
 
@@ -48,12 +50,13 @@ class ImportResult {
       atualizados: (json['atualizados'] as num?)?.toInt() ?? 0,
       ignorados: (json['ignorados'] as num?)?.toInt() ?? 0,
       erros: erros,
+      connectionError: false,
       ultimaSincronizacao: json['ultima_sincronizacao']?.toString(),
       message: json['message']?.toString(),
     );
   }
 
-  factory ImportResult.failure(String message) {
+  factory ImportResult.failure(String message, {required bool connectionError}) {
     return ImportResult(
       success: false,
       importados: 0,
@@ -61,6 +64,7 @@ class ImportResult {
       ignorados: 0,
       erros: const [],
       message: message,
+      connectionError: connectionError,
       ultimaSincronizacao: null,
     );
   }
@@ -88,9 +92,24 @@ class EpublicaIntegrationService {
       final json = await request();
       return ImportResult.fromJson(json);
     } on DioException catch (err) {
-      return ImportResult.failure(_mapDioError(err));
+      return ImportResult.failure(_mapDioError(err), connectionError: _isConnectionError(err));
     } catch (_) {
-      return ImportResult.failure('Não foi possível conectar ao backend.');
+      return ImportResult.failure('Não foi possível conectar ao backend.', connectionError: true);
+    }
+  }
+
+  bool _isConnectionError(DioException err) {
+    switch (err.type) {
+      case DioExceptionType.connectionTimeout:
+      case DioExceptionType.receiveTimeout:
+      case DioExceptionType.sendTimeout:
+      case DioExceptionType.connectionError:
+      case DioExceptionType.unknown:
+      case DioExceptionType.badCertificate:
+        return true;
+      case DioExceptionType.badResponse:
+      case DioExceptionType.cancel:
+        return false;
     }
   }
 
@@ -123,13 +142,13 @@ class EpublicaIntegrationService {
           return backendMessage;
         }
         if (status >= 500) {
-          return 'Não foi possível conectar ao backend.';
+          return 'Erro no servidor (${status == 0 ? '5xx' : status}).';
         }
         return 'Não foi possível concluir a importação.';
       case DioExceptionType.cancel:
         return 'Importação cancelada.';
       case DioExceptionType.badCertificate:
-        return 'Não foi possível conectar ao backend.';
+        return 'Erro de certificado SSL.';
     }
   }
 }

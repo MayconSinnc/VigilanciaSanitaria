@@ -1,9 +1,42 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:dio/dio.dart';
 import '../ui/theme.dart';
 
 class AppHeader extends StatelessWidget {
   final String fiscal;
   const AppHeader({super.key, required this.fiscal});
+
+  static const String _debugServerUrl = 'http://127.0.0.1:7777/event';
+  static const bool _debugReportingEnabled = bool.fromEnvironment('DEBUG_REPORT', defaultValue: false);
+
+  Future<void> _debugReport({
+    required String msg,
+    Map<String, dynamic>? data,
+  }) async {
+    if (!_debugReportingEnabled) return;
+    try {
+      await Dio(
+        BaseOptions(
+          connectTimeout: const Duration(milliseconds: 800),
+          receiveTimeout: const Duration(milliseconds: 800),
+          sendTimeout: const Duration(milliseconds: 800),
+        ),
+      ).post(
+        _debugServerUrl,
+        data: {
+          'sessionId': 'sync-never-finishes',
+          'runId': 'pre-fix',
+          'hypothesisId': 'S',
+          'location': 'app_header.dart:sync_button',
+          'msg': msg,
+          'data': data ?? const <String, dynamic>{},
+          'ts': DateTime.now().millisecondsSinceEpoch,
+        },
+      );
+    } catch (_) {}
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -43,8 +76,44 @@ class AppHeader extends StatelessWidget {
         const SizedBox(width: 8),
         IconButton(onPressed: () => Navigator.pushNamed(context, '/perfil'), icon: const Icon(Icons.person, color: AppColors.azulInstitucional)),
         IconButton(
-          onPressed: () {
+          onPressed: () async {
+            // #region debug-point S:sync
+            unawaited(_debugReport(msg: '[DEBUG] Clique no icone de sincronizacao do AppHeader'));
+            // #endregion
             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sincronização iniciada')));
+            final result = await Navigator.pushNamed(
+              context,
+              '/auto-termo',
+              arguments: const <String, dynamic>{
+                'auto_sync_on_open': true,
+                'auto_sync_pop_on_finish': true,
+              },
+            );
+            if (!context.mounted) return;
+            if (result is Map) {
+              if (result['skipped'] == true) {
+                final reason = (result['reason'] ?? '').toString().trim();
+                final msg = reason == 'already_syncing'
+                    ? 'Sincronização já em andamento.'
+                    : reason == 'login_cancelled'
+                        ? 'Sincronização cancelada (login SINNC).'
+                        : 'Sincronização não concluída.';
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+                return;
+              }
+              final ok = (result['ok'] as int?) ?? 0;
+              final erro = (result['erro'] as int?) ?? 0;
+              final firstError = (result['firstError'] ?? '').toString().trim();
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    firstError.isEmpty
+                        ? 'Sincronização concluída: $ok ok, $erro erro(s).'
+                        : 'Sincronização concluída: $ok ok, $erro erro(s). Primeiro erro: $firstError',
+                  ),
+                ),
+              );
+            }
           },
           icon: const Icon(Icons.sync, color: AppColors.azulInstitucional),
         ),

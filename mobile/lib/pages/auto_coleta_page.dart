@@ -47,6 +47,8 @@ class _AutoColetaPageState extends State<AutoColetaPage> {
   String _endereco = '';
   String _telefone = '';
   String? _responsavelEstabelecimento;
+  bool _possuiPastaVisa = false;
+  final TextEditingController _numeroPastaVisaCtrl = TextEditingController();
 
   // Controllers persistentes
   final _fiscalResponsavelCtrl = TextEditingController();
@@ -161,6 +163,7 @@ class _AutoColetaPageState extends State<AutoColetaPage> {
     _respCpfCtrl.dispose();
     _respCargoCtrl.dispose();
     _respTelefoneCtrl.dispose();
+    _numeroPastaVisaCtrl.dispose();
     _nomeProdutoCtrl.dispose();
     _marcaCtrl.dispose();
     _fabricanteCtrl.dispose();
@@ -181,6 +184,8 @@ class _AutoColetaPageState extends State<AutoColetaPage> {
   @override
   void initState() {
     super.initState();
+    _dataFabricacao = DateTime.now();
+    _dataValidade = DateTime.now();
     _generateNumeroColeta();
   }
 
@@ -400,7 +405,7 @@ class _AutoColetaPageState extends State<AutoColetaPage> {
             currentStep: _currentStep,
             steps: _steps,
             onStepTapped: (step) {
-              if (step < _currentStep) {
+              if (step <= _currentStep) {
                 setState(() {
                   _currentStep = step;
                 });
@@ -486,6 +491,41 @@ class _AutoColetaPageState extends State<AutoColetaPage> {
             endereco: _endereco,
             telefone: _telefone,
             responsavel: _responsavelEstabelecimento,
+          ),
+          const SizedBox(height: 16),
+          OfficialSectionCard(
+            title: 'Pasta VISA',
+            icon: Icons.folder,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SwitchListTile(
+                  title: const Text('Possui Pasta VISA?'),
+                  value: _possuiPastaVisa,
+                  onChanged: (v) {
+                    setState(() {
+                      _possuiPastaVisa = v;
+                      if (!v) _numeroPastaVisaCtrl.clear();
+                    });
+                    _dadosFormKey.currentState?.validate();
+                  },
+                  contentPadding: EdgeInsets.zero,
+                ),
+                if (_possuiPastaVisa) ...[
+                  const SizedBox(height: 12),
+                  OfficialTextField(
+                    label: 'Número da Pasta VISA',
+                    controller: _numeroPastaVisaCtrl,
+                    required: true,
+                    validator: (v) {
+                      if (!_possuiPastaVisa) return null;
+                      if ((v ?? '').trim().isEmpty) return 'Informe o número da Pasta VISA.';
+                      return null;
+                    },
+                  ),
+                ],
+              ],
+            ),
           ),
           const SizedBox(height: 16),
           OfficialSectionCard(
@@ -1129,7 +1169,64 @@ class _AutoColetaPageState extends State<AutoColetaPage> {
     );
   }
 
-  void _save() {
+  Future<bool> _perguntarAbrirRelatorioInspecao() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Relatório de Inspeção Sanitária'),
+        content: const Text('Deseja abrir um Relatório de Inspeção Sanitária para complementar este registro?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Não, finalizar')),
+          ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Sim, abrir relatório')),
+        ],
+      ),
+    );
+    return result == true;
+  }
+
+  Future<void> _abrirRelatorioInspecao(Map<String, dynamic> payload) async {
+    final estab = <String, dynamic>{
+      'nomeFantasia': _nomeFantasia,
+      'razaoSocial': _razaoSocial,
+      'cnpj': _cnpj,
+      'endereco': _endereco,
+      'telefone': _telefone,
+      'inscricaoMunicipal': _inscricaoMunicipal,
+    }..removeWhere((_, v) => (v ?? '').toString().trim().isEmpty);
+
+    await Navigator.pushNamed(
+      context,
+      '/relatorio-inspecao-sanitario',
+      arguments: {
+        if (estab.isNotEmpty) 'estabelecimento': estab,
+        'documento_vinculado': {
+          'tipo_documento': payload['tipo_documento'] ?? 'AUTO_COLETA',
+          'numero_ano': payload['numero_ano'] ?? payload['numero_auto'] ?? payload['numero'] ?? _numeroColeta,
+          'payload': payload,
+        },
+      },
+    );
+  }
+
+  Map<String, dynamic> _buildPayload() {
+    return <String, dynamic>{
+      'tipo_documento': 'AUTO_COLETA',
+      'numero_ano': _numeroColeta,
+      'data_lavratura': _dataColeta.toIso8601String().substring(0, 10),
+      'dados_estabelecimento': {
+        'nome_fantasia': _nomeFantasia,
+        'razao_social': _razaoSocial,
+        'cnpj': _cnpj,
+        'inscricao_municipal': _inscricaoMunicipal,
+        'endereco': _endereco,
+        'telefone': _telefone,
+        'possui_pasta_visa': _possuiPastaVisa,
+        'numero_pasta_visa': _possuiPastaVisa ? _numeroPastaVisaCtrl.text.trim() : '',
+      },
+    };
+  }
+
+  Future<void> _save() async {
     // Validar todos os dados obrigatórios antes de salvar
     if (!_validateAllData()) {
       return;
@@ -1141,7 +1238,14 @@ class _AutoColetaPageState extends State<AutoColetaPage> {
         backgroundColor: AppColors.verde,
       ),
     );
-    Navigator.of(context).pop();
+    final payload = _buildPayload();
+    final abrir = await _perguntarAbrirRelatorioInspecao();
+    if (!mounted) return;
+    if (abrir) {
+      await _abrirRelatorioInspecao(payload);
+      if (!mounted) return;
+    }
+    Navigator.of(context).pop(true);
   }
 
   /// Valida todos os dados obrigatórios antes de salvar
@@ -1162,6 +1266,12 @@ class _AutoColetaPageState extends State<AutoColetaPage> {
     if (_respNomeCtrl.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Nome do responsável é obrigatório'), backgroundColor: AppColors.vermelho),
+      );
+      return false;
+    }
+    if (_possuiPastaVisa && _numeroPastaVisaCtrl.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Número da Pasta VISA é obrigatório'), backgroundColor: AppColors.vermelho),
       );
       return false;
     }

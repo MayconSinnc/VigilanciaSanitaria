@@ -1,6 +1,5 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
 import '../services/api.dart';
 import '../widgets/inspection_widgets.dart';
 
@@ -506,7 +505,15 @@ class _NewInspectionPageState extends State<NewInspectionPage> {
                 separatorBuilder: (_, __) => const Divider(height: 1),
                 itemBuilder: (context, index) {
                   final e = _estabResults[index] as Map<String, dynamic>;
-                  final nome = (e['nome_fantasia'] ?? e['nomeFantasia'] ?? e['nome'] ?? e['razao_social'] ?? e['razaoSocial'] ?? 'Sem nome').toString();
+                  final nome = (e['razao_social'] ??
+                          e['razaoSocial'] ??
+                          e['nomeRazaoSocial'] ??
+                          e['nome_razao_social'] ??
+                          e['nome_fantasia'] ??
+                          e['nomeFantasia'] ??
+                          e['nome'] ??
+                          'Sem nome')
+                      .toString();
                   final cnpj = (e['cnpj'] ?? '').toString();
                   final cidade = (e['cidade'] ?? e['municipio'] ?? '').toString();
                   return ListTile(
@@ -589,7 +596,12 @@ class _NewInspectionPageState extends State<NewInspectionPage> {
       '/auto-form',
       arguments: {
         'tipo': tipoCodigo,
-        'nome': _estabelecimentoSelecionado!['nome_fantasia'] ?? '',
+        'nome': _estabelecimentoSelecionado!['razao_social'] ??
+            _estabelecimentoSelecionado!['razaoSocial'] ??
+            _estabelecimentoSelecionado!['nomeRazaoSocial'] ??
+            _estabelecimentoSelecionado!['nome_razao_social'] ??
+            _estabelecimentoSelecionado!['nome_fantasia'] ??
+            '',
         'cnpj': _estabelecimentoSelecionado!['cnpj'] ?? '',
         'estabelecimento': _estabelecimentoSelecionado,
         'estabelecimentoId': _estabelecimentoSelecionado!['id'],
